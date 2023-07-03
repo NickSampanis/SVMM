@@ -1,0 +1,170 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Source Files\vdevs">
+      <UniqueIdentifier>{63915531-0d67-4929-a2a3-074716177e71}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="SVMM.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="haxm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="dma.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="i440fx.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="pci.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="bitmap.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="pic.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="windbg.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cmos.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="ps2.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="bios.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="pit.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="timer.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="gvm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="piix3.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="kb8042.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="parallel.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="serial.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="gui.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="vgacore.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="win32gui.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="vga.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="haxm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="dma.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="i440fx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pci.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="bitmap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="windbg.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SVMM.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cmos.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ps2.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="bios.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pit.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="timer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gvm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gvm_types.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gvm_ver.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="kvm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="piix3.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="kb8042.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="parallel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="serial.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vga_bitmap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gui.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vgacore.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="win32gui.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="vga.h">
+      <Filter>Header Files</Filter>
+    </None>
+  </ItemGroup>
+</Project>
