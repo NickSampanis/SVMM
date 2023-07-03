@@ -1814,7 +1814,6 @@ ULONG VgaCorePortIoReadHandler(ULONG64 Address, ULONG Length)
             /* ??? */
             return (0);
         }
-        //eee
         break;
 
     case 0x03d4: /* CRTC Index Register (color emulation modes) */
