@@ -13,7 +13,7 @@ struct piix3 {
 	BYTE irqRegister[16];
 	DWORD irqStatus[4][16];
 };
-
+VOID Piix3Initialize();
 VOID Piix3RegisterIrq(PCI* Pci, ULONG Address, BYTE irq);
 VOID Piix3UnregisterIrq(PCI* Pci, ULONG Address, BYTE irq);
 

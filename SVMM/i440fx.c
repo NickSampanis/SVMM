@@ -11,7 +11,7 @@ static ULONG I440fxPciConfReadHandler(ULONG64 Address, ULONG Length)
 static VOID I440fxPciConfWriteHandler(PCI *Pci, ULONG64 Address, ULONG Value, ULONG Length)
 {
 	ULONG i;
-	BYTE byte;
+	BYTE byte, area;
 
 	if ((Address >= 0x10) && (Address < 0x34))
 		return;
@@ -19,77 +19,72 @@ static VOID I440fxPciConfWriteHandler(PCI *Pci, ULONG64 Address, ULONG Value, UL
 	for (i = 0; i < Length; i++) {
 		byte = (Value >> i) & 0xff;
 		switch (Address + i) {
-		case 0x04:
-			Pci->conf[Address + i] = (byte & 0x40) | 0x06;
-			break;
-		case 0x07:
-			Pci->conf[Address + i] &= ~(byte & 0xf9);
-			break;
-		case 0x0d:
-			Pci->conf[Address + i] = (byte & 0xf8);
-			break;
-		case 0x06:
-		case 0x0c:
-		case 0x0f:
-			break;
-		case 0x50:
-			Pci->conf[Address + i] = (byte & 0x70);
-			break;
-		case 0x51:
-			Pci->conf[Address + i] = (byte & 0x8f) | 0x20;
-			break;
-		case 0x59:
-		case 0x5A:
-		case 0x5B:
-		case 0x5C:
-		case 0x5D:
-		case 0x5E:
-		case 0x5F:
-			/*
-			if (value8 != oldval) {
-				BX_PCI_THIS pci_conf[address + i] = value8;
-				if ((address + i) == 0x59) {
-					area = BX_MEM_AREA_F0000;
-					DEV_mem_set_memory_type(area, 0, (value8 >> 4) & 0x1);
-					DEV_mem_set_memory_type(area, 1, (value8 >> 5) & 0x1);
+			case 0x04:
+				Pci->conf[Address + i] = (byte & 0x40) | 0x06;
+				break;
+			case 0x07:
+				Pci->conf[Address + i] &= ~(byte & 0xf9);
+				break;
+			case 0x0d:
+				Pci->conf[Address + i] = (byte & 0xf8);
+				break;
+			case 0x06:
+			case 0x0c:
+			case 0x0f:
+				break;
+			case 0x50:
+				Pci->conf[Address + i] = (byte & 0x70);
+				break;
+			case 0x51:
+				Pci->conf[Address + i] = (byte & 0x8f) | 0x20;
+				break;
+			case 0x59:
+			case 0x5A:
+			case 0x5B:
+			case 0x5C:
+			case 0x5D:
+			case 0x5E:
+			case 0x5F:
+				if (Pci->conf[Address + i] != byte) {
+					Pci->conf[Address + i] = byte;
+					if (Address + i == 0x59) {
+						i440fx.memory_type[BX_MEM_AREA_F0000][0] = (Value >> 4) & 1;
+						i440fx.memory_type[BX_MEM_AREA_F0000][1] = (Value >> 5) & 1;
+					}
+					else {
+						area = ((Address + i) - 0x5A) << 1;
+						i440fx.memory_type[area][0] = (Value >> 0) & 1;
+						i440fx.memory_type[area][1] = (Value >> 1) & 1;
+						area++;
+						i440fx.memory_type[area][0] = (Value >> 4) & 1;
+						i440fx.memory_type[area][1] = (Value >> 5) & 1;
+					}
 				}
-				else {
-					area = ((address + i) - 0x5a) << 1;
-					DEV_mem_set_memory_type(area, 0, (value8 >> 0) & 0x1);
-					DEV_mem_set_memory_type(area, 1, (value8 >> 1) & 0x1);
-					area++;
-					DEV_mem_set_memory_type(area, 0, (value8 >> 4) & 0x1);
-					DEV_mem_set_memory_type(area, 1, (value8 >> 5) & 0x1);
-				}
-				BX_INFO(("%s write to PAM register %x (TLB Flush)", csname[BX_PCI_THIS chipset], address + i));
-				bx_pc_system.MemoryMappingChanged();
+				break;
+			case 0x60:
+			case 0x61:
+			case 0x62:
+			case 0x63:
+			case 0x64:
+			case 0x65:
+			case 0x66:
+			case 0x67:
+				Pci->conf[Address + i] = byte;
+				if (Pci->conf[Address] != i440fx.drb[(Address + i) & 7])
+					i440fx.dramDetect |= (1 << ((Address + i) & 7));
+				else
+					i440fx.dramDetect &= ~(1 << ((Address + i) & 7));
+				break;
+			case 0x72:
+				//smram_control(value8); // SMRAM control register
+				break;
+			case 0x7a:
+				Pci->conf[Address + i] &= 0x0a;
+				Pci->conf[Address + i] |= (byte & 0xf5);
+				break;
+			default:
+				Pci->conf[Address + i] = byte;
 			}
-			*/
-			break;
-		case 0x60:
-		case 0x61:
-		case 0x62:
-		case 0x63:
-		case 0x64:
-		case 0x65:
-		case 0x66:
-		case 0x67:
-			Pci->conf[Address + i] = byte;
-			if (Pci->conf[Address] != i440fx.drb[(Address + i) & 7])
-				i440fx.dramDetect |= (1 << ((Address + i) & 7));
-			else
-				i440fx.dramDetect &= ~(1 << ((Address + i) & 7));
-			break;
-		case 0x72:
-			//smram_control(value8); // SMRAM control register
-			break;
-		case 0x7a:
-			Pci->conf[Address + i] &= 0x0a;
-			Pci->conf[Address + i] |= (byte & 0xf5);
-			break;
-		default:
-			Pci->conf[Address + i] = byte;
-		}
 	}
 }
 
@@ -100,9 +95,9 @@ VOID I440fxInitialize(VOID* Ram, ULONG64 RamSize)
 	BYTE type[3] = { 128, 32, 8 };
 
 	memset(&i440fx, '\0', sizeof(i440fx));
-	devFunc = PCI_DEVFUNC_TO_ADDRESS(0, 0);
+	devFunc = BX_PCI_DEVICE(0, 0);
 	RegisterPciHandler(devFunc, I440fxPciConfWriteHandler, I440fxPciConfReadHandler);
-	InitPciConfig(devFunc, 0x8086, 0x1237, 0x00, 0x060000, 0x00, 0);
+	InitPciConfig(devFunc, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82441, 0x00, 0x060000, 0x00, 0);
 
 	RegisterPortIoHandler(0x92, (WritePortIoHandlerCallback)I440fxPortIoWriteHandler, (ReadPortIoHandlerCallback)I440fxPortIoReadHandler);
 	RegisterPortIoHandler(0xcf8, (WritePortIoHandlerCallback)I440fxPortIoWriteHandler, (ReadPortIoHandlerCallback)I440fxPortIoReadHandler);

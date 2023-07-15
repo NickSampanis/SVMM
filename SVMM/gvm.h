@@ -557,5 +557,7 @@ NTSTATUS gvm_get_registers(struct Registers* Registers);
 
 NTSTATUS gvm_set_registers(struct Registers* Registers);
 int gvm_init(void* ram, size_t ram_size);
+void gvm_register_mmio(unsigned int address, size_t size);
+void gvm_remove_mmio(unsigned int address, size_t size);
 
 #endif

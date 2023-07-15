@@ -2,6 +2,7 @@
 #include "SVMM.h"
 #include "windbg.h"
 #include "i440fx.h"
+#include "piix3.h"
 #include "dma.h"
 #include "pci.h"
 #include "pic.h"
@@ -15,6 +16,7 @@
 #include "gvm.h"
 #include "haxm.h"
 #include "gui.h"
+#include "ide.h"
 #include "vgacore.h"
 #include <intrin.h>
 #include <CommCtrl.h>
@@ -65,12 +67,14 @@ BYTE* SvmmGetHostAddress(ULONG64 GuestPa)
 	else if (gpaAddress >= 0xE0000 && gpaAddress <= 0xFFFFF) {
 		gpaAddress += (ULONG64)Ram + RamSize;
 	}
+	/*
 	else if (gpaAddress >= 0x0000 && gpaAddress <= 0x20000) { //TODO CHANGE IT TO RAM
 		if (!(Registers.context._cr0 & 1)) {
 			gpaAddress = GuestPa | (ULONG64)Registers.context._cs.selector << 4;
 		}
 		gpaAddress += (ULONG64)Ram + RamSize + 0xE0000;
 	}
+	*/
 	else {
 		gpaAddress += (ULONG64)Ram;
 	}
@@ -391,77 +395,6 @@ NTSTATUS SvmmGetRegisters(struct Registers* Registers)
 	return 0;
 }
 
-/*
-
-#define BX_KEY_PRESSED  0x00000000
-#define BX_KEY_RELEASED 0x80000000
-
-#define BX_KEY_UNHANDLED 0x10000000
-
-#define VK_PRIOR    65365
-#define VK_NEXT     65366
-#define VK_F2       65471
-#define VK_F3       65472
-#define VK_F4       65473
-#define VK_F5       65474
-#define VK_F6       65475
-#define VK_F7       65476
-#define VK_F8       65477
-#define VK_F9       65478
-#define VK_F11      65480
-#define VK_UP       65362
-#define VK_DOWN     65364
-#define VK_RETURN   65293
-#define VK_LEFT     65361
-#define VK_RIGHT    65363
-#define VK_END      65367
-#define VK_HOME     65360
-#define VK_DELETE   65535
-#define VK_ESCAPE   65307
-
-HHOOK hKeyboardHook;
-typedef struct {
-	HINSTANCE hInstance;
-
-	CRITICAL_SECTION drawCS;
-	CRITICAL_SECTION keyCS;
-	CRITICAL_SECTION mouseCS;
-
-	int kill;  // reason for terminateEmul(int)
-	BOOL UIinited;
-	HWND mainWnd;
-	HWND simWnd;
-} sharedThreadInfo;
-
-sharedThreadInfo stInfo;
-static BITMAPINFO* bitmap_info;
-static int ms_savedx = 0, ms_savedy = 0;
-static DWORD workerThreadID = 0;
-HANDLE workerThread;
-HWND hwndTB, hwndSB;
-HBITMAP MemoryBitmap;
-HDC MemoryDC;
-static HWND hotKeyReceiver = NULL;
-BOOL fullscreenMode, inFullscreenToggle;
-DWORD x_tilesize, win32_max_xres, win32_max_yres, dimension_x, dimension_y, current_bpp, stretched_x, stretched_y, stretch_factor;
-DWORD bx_bitmap_entries, win32_toolbar_entries, bx_hb_separator;
-RGBQUAD* cmap_index;
-HBITMAP vgafont[256];
-BOOL mouseCaptureMode, mouseCaptureNew, mouseToggleReq;
-int mouse_buttons;
-
-
-#define BX_MAX_STATUSITEMS			10
-#define BX_SB_MAX_TEXT_ELEMENTS		2
-#define EXIT_GUI_SHUTDOWN			1
-#define SIZE_OF_SB_MOUSE_MESSAGE 170
-#define SIZE_OF_SB_ELEMENT        40
-
-DWORD SB_Edges[BX_MAX_STATUSITEMS + BX_SB_MAX_TEXT_ELEMENTS + 1];
-unsigned SB_Text_Elements;
-
-*/
-
 
 int main(int argc, char *argv[])
 {
@@ -495,6 +428,7 @@ int main(int argc, char *argv[])
 	SerialInitialize();
 	TimerInitialize();
 	I440fxInitialize();
+	Piix3Initialize();
 	PicInitialize();
 	DmaInitialize();
 	CmosInitialize();
@@ -502,6 +436,8 @@ int main(int argc, char *argv[])
 	BiosInitialize();
 	PitInitialize();
 	VgaCoreInitialize();
+	IdeInitialize();
+
 	//Load Bios At The End Of Ram
 	//Status = SvmmLoadRom("bios.bin", TYPE_SYSTEM_BIOS);
 	Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);

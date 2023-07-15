@@ -84,6 +84,15 @@
     <ClCompile Include="vga.c">
       <Filter>Source Files\vdevs</Filter>
     </ClCompile>
+    <ClCompile Include="ide.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="harddisk.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
+    <ClCompile Include="sparse.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="haxm.h">
@@ -159,6 +168,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="win32gui.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ide.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="harddisk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sparse.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

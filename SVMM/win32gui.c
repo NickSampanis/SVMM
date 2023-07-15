@@ -1511,7 +1511,7 @@ void draw_char(BYTE ch, BYTE fc, BYTE bc, WORD xc, WORD yc,
         DrawBitmap(hdc, vgafont[ch], xc, yc, fw, fh, fx, fy, bc, fc);
     }
     
-    //DrawBitmap(GetDC(stInfo.simWnd), vgafont[0x41], 0, 0, 9, 32, 0, 0, 0, 0);
+    //DrawBitmap(hdc, vgafont['A'], xc, yc, fw, fh, fx, fy, fc, bc);
 
     ReleaseDC(stInfo.simWnd, hdc);
     LeaveCriticalSection(&stInfo.drawCS);
@@ -2008,11 +2008,11 @@ DWORD WINAPI UIThread()
         ReleaseDC(stInfo.simWnd, hdc);
 
         if (MemoryBitmap && MemoryDC) {
-            //resize_main_window(FALSE);
+            resize_main_window(FALSE);
             ShowWindow(stInfo.mainWnd, SW_SHOW);
             stInfo.UIinited = TRUE;
 
-            //clear_screen();
+            clear_screen();
 
             while (GetMessage(&msg, NULL, 0, 0)) {
                 TranslateMessage(&msg);

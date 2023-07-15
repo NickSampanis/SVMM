@@ -2,6 +2,7 @@
 #include "bitmap.h"
 #include "SVMM.h"
 #include "haxm.h"
+#include "gvm.h"
 #include <stdio.h>
 
 //PORT IO
@@ -15,7 +16,7 @@ static WriteMMIOHandlerCallback WriteMMIOHandlers[0xffff];
 static ReadMMIOHandlerCallback ReadMMIOHandlers[0xffff];
 
 
-static PCI PciDevices[BX_MAX_PCI_DEVICES];
+PCI PciDevices[BX_MAX_PCI_DEVICES];
 
 NTSTATUS RegisterPortIoHandler(ULONG Address, WritePortIoHandlerCallback WriteHandler, ReadPortIoHandlerCallback ReadHandler)
 {
@@ -36,7 +37,7 @@ NTSTATUS RegisterPortIoHandler(ULONG Address, WritePortIoHandlerCallback WriteHa
 	return 0;
 }
 
-NTSTATUS RemovePortIoHandler(ULONG Address, WritePortIoHandlerCallback WriteHandler, ReadPortIoHandlerCallback ReadHandler)
+NTSTATUS RemovePortIoHandler(ULONG Address)
 {
 	if (Address >= 0xffff || !RtlTestBit(&PortIoBitmap, Address)) {
 		fprintf(stderr, "Error in RegisterPortHandler, Address 0x%lx not mapped!\n", Address);
@@ -70,27 +71,32 @@ VOID WritePortIoHandler(ULONG Address, ULONG Value, ULONG Length)
 	WritePortHandlers[Address](Address, Value, Length);
 }
 
+VOID GetPortIoHandler(ULONG Address, WritePortIoHandlerCallback* WriteHandler, ReadPortIoHandlerCallback* ReadHandler)
+{
+	if (Address >= 0xffff || !RtlTestBit(&PortIoBitmap, Address) || !ReadPortHandlers[Address] || !WritePortHandlers[Address]) {
+		fprintf(stderr, "Error in ReadPortIoHandler, Address 0x%lx is not mapped!\n", Address);
+		exit(-1);
+	}
+	*WriteHandler = WritePortHandlers[Address];
+	*ReadHandler = ReadPortHandlers[Address];
+}
 
 //PCI 
-NTSTATUS RegisterPciHandler(ULONG Address, WritePciConfigHandlerCallback WriteHandler, ReadPciConfigHandlerCallback ReadHandler)
+NTSTATUS RegisterPciHandler(ULONG DeviceFunction, WritePciConfigHandlerCallback WriteHandler, ReadPciConfigHandlerCallback ReadHandler)
 {
-	UCHAR devFunc, offset;
 
-	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
-	offset = PCI_ADDRESS_TO_OFFSET(Address);
-
-	if (devFunc >= BX_MAX_PCI_DEVICES) {
+	if (DeviceFunction >= BX_MAX_PCI_DEVICES) {
 		fprintf(stderr, "Error in RegisterPciHandler, Address greater than available pci devices!\n");
 		return -1;
 	}
 	
-	if (PciDevices[devFunc].initialized) {
+	if (PciDevices[DeviceFunction].initialized) {
 		fprintf(stderr, "Error in RegisterPciHandler, pci device already initialized!\n");
 		return -1;
 	}
-	PciDevices[devFunc].initialized = 1;
-	PciDevices[devFunc].WritePciConfHandler = WriteHandler;
-	PciDevices[devFunc].ReadPciConfHandler = ReadHandler;
+	PciDevices[DeviceFunction].initialized = 1;
+	PciDevices[DeviceFunction].WritePciConfHandler = WriteHandler;
+	PciDevices[DeviceFunction].ReadPciConfHandler = ReadHandler;
 
 	return 0;
 }
@@ -98,11 +104,16 @@ NTSTATUS RegisterPciHandler(ULONG Address, WritePciConfigHandlerCallback WriteHa
 
 VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length)
 {
-	UCHAR bus, devFunc, offset;
+	WritePortIoHandlerCallback PortIoWriteHandler;
+	ReadPortIoHandlerCallback PortIoReadHandler;
+	WriteMMIOHandlerCallback MMIOWriteHandler;
+	ReadMMIOHandlerCallback MMIOReadHandler;
+	BYTE devFunc, offset, barNum, value8, oldval, bar_change;
+	ULONG i;
 
-	bus = PCI_ADDRESS_TO_BUS(Address);
 	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
 	offset = PCI_ADDRESS_TO_OFFSET(Address);
+	bar_change = 0;
 	if (devFunc >= BX_MAX_PCI_DEVICES) {
 		fprintf(stderr, "Error in WritePciConfHandler, Address greater than available pci devices!\n");
 		exit(-1);
@@ -118,7 +129,47 @@ VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length)
 	}
 	//set bars
 	if ((PciDevices[devFunc].conf[PCI_CONF_HDR_TYPE] & 3) == PCI_HDR_TYPE_DEVICE && offset >= PCI_CONF_BAR0 && offset <= PCI_CONF_BAR5) {
-
+		barNum = (offset - 0x10) >> 2;
+		if (PciDevices[devFunc].bar[barNum].type != BX_PCI_BAR_TYPE_NONE) {
+			for (i = 0; i < Length; i++) {
+				value8 = (Value >> (i * 8)) & 0xff;
+				oldval = PciDevices[devFunc].conf[offset + i];
+				if (((Address + i) & 0x03) == 0) {
+					if (PciDevices[devFunc].bar[barNum].type == BX_PCI_BAR_TYPE_IO) {
+						value8 = (value8 & 0xfc) | 0x01;
+					}
+					else {
+						value8 = (value8 & 0xf0) | (oldval & 0x0f);
+					}
+				}
+				bar_change |= (value8 != oldval);
+				PciDevices[devFunc].conf[offset + i] = value8;
+			}
+			if (bar_change) {
+				if (PciDevices[devFunc].bar[barNum].type == BX_PCI_BAR_TYPE_IO) {
+					//GetPortIoHandler(PciDevices[devFunc].bar[barNum].addr, &PortIoWriteHandler, &PortIoReadHandler);
+					for (i = 0; i < PciDevices[devFunc].bar[barNum].size; i++) {
+						if (PciDevices[devFunc].bar[barNum].mask & (1 << i))
+							continue;
+						RemovePortIoHandler(PciDevices[devFunc].bar[barNum].addr + i);
+						PortIoWriteHandler = PciDevices[devFunc].bar[barNum].WriteHandler;
+						PortIoReadHandler = PciDevices[devFunc].bar[barNum].ReadHandler;
+						RegisterPortIoHandler(Value + i, PortIoWriteHandler, PortIoReadHandler);
+					}
+				}
+				else {
+					//GetMMIOHandler(PciDevices[devFunc].bar[barNum].addr, &MMIOWriteHandler, &MMIOReadHandler);
+					for (i = 0; i < PciDevices[devFunc].bar[barNum].size; i += 0x10000) {
+						RemoveMMIOHandler(PciDevices[devFunc].bar[barNum].addr + i);
+						MMIOWriteHandler = PciDevices[devFunc].bar[barNum].WriteHandler;
+						MMIOReadHandler = PciDevices[devFunc].bar[barNum].ReadHandler;
+						RegisterMMIOHandler(Value + i, MMIOWriteHandler, MMIOReadHandler);
+					}
+				}
+				PciDevices[devFunc].bar[barNum].addr = Value;
+				
+			}
+		}
 	}
 	//set rom address
 	else if (offset == PCI_CONF_ROM_ADDRESS) {
@@ -126,7 +177,7 @@ VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length)
 	}
 	//set irq line
 	else if (offset == PCI_CONF_IRQ_LINE) {
-
+		PciDevices[devFunc].conf[PCI_CONF_IRQ_LINE] = Value & 0xff;
 	}
 	//call device specific handler
 	else {
@@ -193,8 +244,37 @@ VOID InitPciConfig(ULONG Address, USHORT Vendor, USHORT Device, BYTE Revision,
 	PciDevices[devFunc].conf[0x3d] = Interrupt;
 }
 
-//MMIO
+void PciSetBarIo(BYTE DeviceNumber, BYTE BarNumber, USHORT Size, ReadPortIoHandlerCallback ReadPortHandler,
+	WritePortIoHandlerCallback WritePortHandler, DWORD Mask)
+{
 
+	if (BarNumber < 6) {
+		PciDevices[DeviceNumber].bar[BarNumber].type = BX_PCI_BAR_TYPE_IO;
+		PciDevices[DeviceNumber].bar[BarNumber].size = Size;
+		PciDevices[DeviceNumber].bar[BarNumber].ReadHandler = ReadPortHandler;
+		PciDevices[DeviceNumber].bar[BarNumber].WriteHandler = WritePortHandler;
+		PciDevices[DeviceNumber].bar[BarNumber].mask = Mask;
+		PciDevices[DeviceNumber].conf[0x10 + BarNumber * 4] = 0x01;
+
+
+	}
+}
+
+void PciSetBarMmio(BYTE DeviceNumber, BYTE BarNumber, DWORD Size, ReadMMIOHandlerCallback ReadMMIOHandler,
+	WriteMMIOHandlerCallback WriteMMIOHandler)
+{
+	
+	if (BarNumber < 6) {
+		PciDevices[DeviceNumber].bar[BarNumber].type = BX_PCI_BAR_TYPE_MEM;
+		PciDevices[DeviceNumber].bar[BarNumber].size = Size;
+		PciDevices[DeviceNumber].bar[BarNumber].ReadHandler = ReadMMIOHandler;
+		PciDevices[DeviceNumber].bar[BarNumber].WriteHandler = WriteMMIOHandler;
+		PciDevices[DeviceNumber].conf[0x10 + BarNumber * 4] = 0x00;
+	}
+}
+
+
+//Register MMIO, each entry should 0x10000 in size
 NTSTATUS RegisterMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandler, ReadMMIOHandlerCallback ReadHandler)
 {
 	PULONG buffer;
@@ -213,11 +293,25 @@ NTSTATUS RegisterMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandle
 	RtlSetBit(&MMIOBitmap, index);
 	WriteMMIOHandlers[index] = WriteHandler;
 	ReadMMIOHandlers[index] = ReadHandler;
+	gvm_register_mmio(Address, 0x10000);
 
 	return 0;
 }
 
-NTSTATUS RemoveMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandler, ReadMMIOHandlerCallback ReadHandler)
+VOID GetMMIOHandler(ULONG Address, WriteMMIOHandlerCallback* WriteHandler, ReadMMIOHandlerCallback* ReadHandler)
+{
+	ULONG index;
+
+	index = Address >> 16;
+	if (index >= 0xffff || !RtlTestBit(&MMIOBitmap, index) || !ReadMMIOHandlers[index] || !WriteMMIOHandlers[index]) {
+		fprintf(stderr, "Error in ReadMMIOHandler, Address 0x%lx is not mapped!\n", Address);
+		exit(-1);
+	}
+	*WriteHandler = WriteMMIOHandlers[index];
+	*ReadHandler = ReadMMIOHandlers[index];
+}
+
+NTSTATUS RemoveMMIOHandler(ULONG Address)
 {
 	ULONG index;
 
@@ -230,6 +324,7 @@ NTSTATUS RemoveMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandler,
 	RtlClearBit(&MMIOBitmap, index);
 	WriteMMIOHandlers[index] = NULL;
 	ReadMMIOHandlers[index] = NULL;
+	gvm_remove_mmio(Address, 0x10000);
 
 	return 0;
 }
@@ -259,7 +354,4 @@ VOID WriteMMIOHandler(ULONG Address, BYTE *Data, ULONG Length)
 	}
 	WriteMMIOHandlers[index](Address, Data, Length);
 }
-
-
-
 

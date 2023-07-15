@@ -514,10 +514,10 @@ VOID VgaInitialize()
         RegisterPortIoHandler(Address, (WritePortIoHandlerCallback)VgaPortIoWriteHandler, (ReadPortIoHandlerCallback)VgaCorePortIoReadHandler);
 
     }
-    devFunc = PCI_DEVFUNC_TO_ADDRESS(2, 0);
+    devFunc = BX_PCI_DEVICE(2, 0);
     RegisterPciHandler(devFunc, VgaWritePciConfHandler, VgaReadPciConfHandler);
-    InitPciConfig(devFunc, 0x1234, 0x1111, 0x00, 0x030000, 0x00, 0);
-
+    InitPciConfig(devFunc, PCI_VENDOR_ID_TEST, 0x1111, 0x00, 0x030000, 0x00, 0);
+    
     for (Address = 0x1CE; Address <= 0x1CF; Address++) {
         RegisterPortIoHandler(Address, (WritePortIoHandlerCallback)VgaVbePortIoWriteHandler, (ReadPortIoHandlerCallback)VgaVbePortIoReadHandler);
 

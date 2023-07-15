@@ -160,15 +160,15 @@ VOID Piix3SetIrq(PCI* Pci, BYTE devFunc, BYTE line, BYTE level)
 
 }
 
-VOID Piix3Initialize(VOID* Ram, ULONG64 RamSize)
+VOID Piix3Initialize()
 {
 	USHORT devFunc;
 	ULONG i;
 
 	memset(&piix3, '\0', sizeof(piix3));
-	devFunc = PCI_DEVFUNC_TO_ADDRESS(1, 0);
+	devFunc = BX_PCI_DEVICE(1, 0);
 	RegisterPciHandler(devFunc, Piix3PciConfWriteHandler, Piix3fxPciConfReadHandler);
-	InitPciConfig(devFunc, 0x8086, 0x7000, 0x00, 0x060100, 0x80, 0);
+	InitPciConfig(devFunc, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_0, 0x00, 0x060100, 0x80, 0);
 
 	RegisterPortIoHandler(0xb2, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);
 	RegisterPortIoHandler(0xb3, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);

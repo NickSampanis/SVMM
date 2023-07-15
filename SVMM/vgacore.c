@@ -297,7 +297,8 @@ VOID VgaCoreUpdate(VOID)
                 plane[2] = &VgaCore.memory[2 << VgaCore.plane_shift];
                 plane[3] = &VgaCore.memory[3 << VgaCore.plane_shift];
                 line_compare = VgaCore.line_compare;
-                if (VgaCore.y_doublescan) line_compare >>= 1;
+                if (VgaCore.y_doublescan)
+                    line_compare >>= 1;
 
                 for (yc = 0, yti = 0; yc < iHeight; yc += Y_TILESIZE, yti++) {
                     for (xc = 0, xti = 0; xc < iWidth; xc += X_TILESIZE, xti++) {
@@ -1307,9 +1308,11 @@ VOID VgaCorePortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
         case 3: /* sequencer: character map select register */
             VgaCore.sequencer.char_map_select = Value & 0x3f;
             charmap1 = Value & 0x13;
-            if (charmap1 > 3) charmap1 = (charmap1 & 3) + 4;
+            if (charmap1 > 3) 
+                charmap1 = (charmap1 & 3) + 4;
             charmap2 = (Value & 0x2C) >> 2;
-            if (charmap2 > 3) charmap2 = (charmap2 & 3) + 4;
+            if (charmap2 > 3)
+                charmap2 = (charmap2 & 3) + 4;
             if (VgaCore.CRTC.reg[0x09] > 0) {
                 VgaCore.charmap_address = charmap_offset[charmap1];
                 charmap_update = 1;
@@ -1843,6 +1846,12 @@ ULONG VgaCorePortIoReadHandler(ULONG64 Address, ULONG Length)
 
 }
 
+VOID VgaCoreMMIOWriteHandler2(ULONG Address, BYTE* Data, ULONG Length)
+{
+    printf("writing %c\n", *Data);
+
+}
+
 VOID VgaCoreMMIOWriteHandler(ULONG Address, BYTE* Data, ULONG Length)
 {
     ULONG i;
@@ -1906,7 +1915,7 @@ VOID VgaCoreInitialize()
 	//RegisterMMIO
     RegisterMMIOHandler(0xa0000, VgaCoreMMIOWriteHandler, VgaCoreMMIOReadHandler);
     RegisterMMIOHandler(0xb0000, VgaCoreMMIOWriteHandler, VgaCoreMMIOReadHandler);
-   
+    //RegisterMMIOHandler(0x110000, VgaCoreMMIOWriteHandler2, VgaCoreMMIOReadHandler);
 
 	TimerRegister(0x30d40, VgaCoreTimerHandler);
 

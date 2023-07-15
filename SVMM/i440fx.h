@@ -5,6 +5,7 @@
 struct i440fx {
 	DWORD confAddress;
 	DWORD confData;
+	BYTE memory_type[13][2];
 	BYTE dramDetect;
 	BYTE drb[8];
 	BYTE a20;

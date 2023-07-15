@@ -148,8 +148,10 @@
     <ClCompile Include="dma.c" />
     <ClCompile Include="gui.c" />
     <ClCompile Include="gvm.c" />
+    <ClCompile Include="harddisk.c" />
     <ClCompile Include="haxm.c" />
     <ClCompile Include="i440fx.c" />
+    <ClCompile Include="ide.c" />
     <ClCompile Include="kb8042.c" />
     <ClCompile Include="parallel.c" />
     <ClCompile Include="piix3.c" />
@@ -158,6 +160,7 @@
     <ClCompile Include="pic.c" />
     <ClCompile Include="pit.c" />
     <ClCompile Include="serial.c" />
+    <ClCompile Include="sparse.c" />
     <ClCompile Include="SVMM.c" />
     <ClCompile Include="timer.c" />
     <ClCompile Include="vga.c" />
@@ -174,8 +177,10 @@
     <ClInclude Include="gvm.h" />
     <ClInclude Include="gvm_types.h" />
     <ClInclude Include="gvm_ver.h" />
+    <ClInclude Include="harddisk.h" />
     <ClInclude Include="haxm.h" />
     <ClInclude Include="i440fx.h" />
+    <ClInclude Include="ide.h" />
     <ClInclude Include="kb8042.h" />
     <ClInclude Include="kvm.h" />
     <ClInclude Include="parallel.h" />
@@ -185,6 +190,7 @@
     <ClInclude Include="pic.h" />
     <ClInclude Include="pit.h" />
     <ClInclude Include="serial.h" />
+    <ClInclude Include="sparse.h" />
     <ClInclude Include="SVMM.h" />
     <ClInclude Include="timer.h" />
     <ClInclude Include="vgacore.h" />

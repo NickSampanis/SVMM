@@ -1128,8 +1128,9 @@ void init_signal_handlers()
 
 void set_text_charmap(BYTE* fbuffer)
 {
-    memcpy(& vga_charmap, fbuffer, 0x2000);
-    for (unsigned i = 0; i < 256; i++)  char_changed[i] = 1;
+    memcpy(&vga_charmap, fbuffer, 0x2000);
+    for (unsigned i = 0; i < 256; i++) 
+        char_changed[i] = 1;
      charmap_updated = 1;
 }
 
