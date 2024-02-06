@@ -2,6 +2,7 @@
 #include "vgacore.h"
 #include "gui.h"
 #include "pci.h"
+#include "cmos.h"
 
 struct VGA Vga;
 extern struct VgaCore VgaCore;
@@ -515,11 +516,12 @@ VOID VgaInitialize()
 
     }
     devFunc = BX_PCI_DEVICE(2, 0);
-    RegisterPciHandler(devFunc, VgaWritePciConfHandler, VgaReadPciConfHandler);
-    InitPciConfig(devFunc, PCI_VENDOR_ID_TEST, 0x1111, 0x00, 0x030000, 0x00, 0);
+    Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
+    RegisterPciHandler(Address, VgaWritePciConfHandler, VgaReadPciConfHandler);
+    InitPciConfig(Address, PCI_VENDOR_ID_TEST, 0x1111, 0x00, 0x030000, 0x00, 0);
     
     for (Address = 0x1CE; Address <= 0x1CF; Address++) {
         RegisterPortIoHandler(Address, (WritePortIoHandlerCallback)VgaVbePortIoWriteHandler, (ReadPortIoHandlerCallback)VgaVbePortIoReadHandler);
-
     }
+    CmosSetRegister(REG_EQUIPMENT_BYTE, (CmosGetRegister(REG_EQUIPMENT_BYTE) & 0xcf) | 0x00);
 }

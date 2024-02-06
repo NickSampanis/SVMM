@@ -1,11 +1,18 @@
 #include "ide.h"
 #include "pci.h"
 #include "timer.h"
+#include "harddisk.h"
 #include "SVMM.h"
+#include <stdio.h>
 
 struct ide Ide;
 
-extern PCI PciDevices[BX_MAX_PCI_DEVICES];
+extern PCI PciDevices[MAX_BUSES][MAX_PCI_DEVICES_PER_BUS];
+
+DWORD IdeBdmaPresent()
+{
+	return PciDevices[0][BX_PCI_DEVICE(1, 1)].bar[4].addr;
+}
 
 static ULONG IdePciConfReadHandler(ULONG64 Address, ULONG Length)
 {
@@ -43,22 +50,24 @@ static VOID IdePciConfWriteHandler(PCI* Pci, ULONG64 Address, ULONG Value, ULONG
 VOID IdePortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 {
 	BYTE offset, channel;
-	USHORT devFunc;
+	ULONG devFunc;
 
 	devFunc = BX_PCI_DEVICE(1, 1);
-	offset = Address - PciDevices[devFunc].bar[4].addr;
+	
+
+	offset = Address - PciDevices[0][devFunc].bar[4].addr;
 	channel = (offset >> 3);
 	offset &= 0x07;
 	switch (offset) {
 		case 0x00:
-			if ((Value & IDE_COMMAND_START) && !(Ide.bmdma[channel].Command & IDE_COMMAND_START)) {
+			if ((Value & IDE_BDMA_COMMAND_START) && !(Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_START)) {
 				Ide.bmdma[channel].Command = Value;
 				Ide.bmdma[channel].Status |= IDE_STATUS_ACTIVE;
 				Ide.bmdma[channel].PrdCurrent = Ide.bmdma[channel].PrdTable;
 				Ide.bmdma[channel].BufferOffset = 0;
 				//bx_pc_system.activate_timer(Ide.bmdma[channel].timer_index, 1000, 0);
 			}
-			else if (!(Value & IDE_COMMAND_START) && (Ide.bmdma[channel].Command & IDE_COMMAND_START)) {
+			else if (!(Value & IDE_BDMA_COMMAND_START) && (Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_START)) {
 				Ide.bmdma[channel].Command = Value;
 				Ide.bmdma[channel].Status &= ~IDE_STATUS_ACTIVE;
 			}
@@ -79,7 +88,7 @@ ULONG IdePortIoReadHandler(ULONG Address, ULONG Length)
 	DWORD value = 0xffffffff;
 
 	devFunc = BX_PCI_DEVICE(1, 1);
-	offset = Address - PciDevices[devFunc].bar[4].addr;
+	offset = Address - PciDevices[0][devFunc].bar[4].addr;
 	channel = (offset >> 3);
 	offset &= 0x07;
 	switch (offset) {
@@ -93,14 +102,20 @@ ULONG IdePortIoReadHandler(ULONG Address, ULONG Length)
 	return value;
 }
 
+VOID IdeStartTransfer(BYTE Channel)
+{
+	if (Channel < 2)
+		Ide.bmdma[Channel].DataReady = 1;
+}
+
 void IdeTimerHandler()
 {
 	BYTE channel;
 	DWORD size, sector_size, i;
 	PRD_ENTRY prdEntry;
-	NTSTATUS Status;
+	ULONG64 ret;
 
-	Status = 0;
+	ret = 0;
 
 	for (channel = 0; channel < 2; channel++) {
 		if (Ide.bmdma[channel].Status & IDE_STATUS_ACTIVE && Ide.bmdma[channel].PrdCurrent)
@@ -108,10 +123,12 @@ void IdeTimerHandler()
 	}
 	if (channel == 2)
 		return;
-	
+	if (!Ide.bmdma[channel].DataReady && (Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_WRITE))
+		return;
+
 	//TODO CHECK IF Address EXCEEDS ram size
-	memcpy(&prdEntry.Address, SvmmGetHostAddress(Ide.bmdma[channel].PrdCurrent), 4);
-	memcpy(&prdEntry.Count, SvmmGetHostAddress(Ide.bmdma[channel].PrdCurrent + 4), 4);
+	memcpy(&prdEntry.Address, GetHostPageFromGPA(Ide.bmdma[channel].PrdCurrent), 4);
+	memcpy(&prdEntry.Count, GetHostPageFromGPA(Ide.bmdma[channel].PrdCurrent + 4), 4);
 
 	size = prdEntry.Count & 0xfffe;
 	if (size == 0) 
@@ -121,37 +138,37 @@ void IdeTimerHandler()
 	if (Ide.bmdma[channel].BufferOffset + size < size || Ide.bmdma[channel].BufferOffset + size > IDE_BUFFER_SIZE)
 		Ide.bmdma[channel].BufferOffset = 0;
 
-	if (!(Ide.bmdma[channel].Command & IDE_COMMAND_WRITE)) 
-		memcpy(Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, SvmmGetHostAddress(prdEntry.Address), size);
+	if (!(Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_WRITE)) 
+		memcpy(Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, GetHostPageFromGPA(prdEntry.Address), size);
 
 	for (i = 0; i < size; i += 512) {
 		if (i + 512 > size) {
 			/* write/read remaining bytes */
-			if (Ide.bmdma[channel].Command & IDE_COMMAND_WRITE) {
-				//Status = HardDiskReadSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, size - i);
+			if (Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_WRITE) {
+				ret = HardDiskBmdmaReadSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, size - i);
 			}
 			else {
-				//Status = HardDiskWriteSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, size - i);
+				ret = HardDiskBmdmaWriteSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, size - i);
 			}
 		}
 		else {
 			/* write/read a sector to/from disk */
-			if (Ide.bmdma[channel].Command & IDE_COMMAND_WRITE) {
-				//Status = HardDiskReadSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, 512);
+			if (Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_WRITE) {
+				ret = HardDiskBmdmaReadSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, 512);
 			}
 			else {
-				//Status = HardDiskWriteSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, 512);
+				ret = HardDiskBmdmaWriteSector(channel, Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset + i, 512);
 			}
 		}
-		if (Status) {
+		if (ret) {
 			/* error, should we mark channel as stopped? */
-			//DEV_hd_bmdma_complete(channel);
+			HardDiskBdmaComplete(channel);
 			return;
 		}
 	}
 	
-	if (Ide.bmdma[channel].Command & IDE_COMMAND_WRITE)
-		memcpy(SvmmGetHostAddress(prdEntry.Address), Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, size);
+	if (Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_WRITE)
+		memcpy(GetHostPageFromGPA(prdEntry.Address), Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, size);
 
 
 	/* if EOT is set, we are done */
@@ -160,7 +177,7 @@ void IdeTimerHandler()
 		Ide.bmdma[channel].Status |= IDE_STATUS_START;
 		Ide.bmdma[channel].PrdCurrent = 0;
 		Ide.bmdma[channel].BufferOffset = 0;
-		//DEV_hd_bmdma_complete(channel);
+		HardDiskBdmaComplete(channel);
 	}
 	else {
 		/* Fetch next table */
@@ -169,19 +186,29 @@ void IdeTimerHandler()
 	}
 }
 
+VOID IdeSetIrq(BYTE Channel)
+{
+	if (Channel < 2)
+		Ide.bmdma[Channel].Status |= 0x4;
+}
+
+
 VOID IdeInitialize()
 {
+	ULONG Address;
 	USHORT devFunc;
 	BYTE i;
 
 	memset(&Ide, '\0', sizeof(Ide));
 
 	devFunc = BX_PCI_DEVICE(1, 1);
-	RegisterPciHandler(devFunc, IdePciConfWriteHandler, IdePciConfReadHandler);
-	InitPciConfig(devFunc, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_1, 0x00, PCI_CLASS_STORAGE_IDE, 0x00, 0);	
-	PciSetBarIo(devFunc, 4, 16, IdePortIoReadHandler, IdePortIoWriteHandler, IDE_PORT_MASK);
-	Ide.bmdma[0].Buffer = malloc(IDE_BUFFER_SIZE);
-	Ide.bmdma[1].Buffer = malloc(IDE_BUFFER_SIZE);
+	Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
+	RegisterPciHandler(Address, IdePciConfWriteHandler, IdePciConfReadHandler);
+	InitPciConfig(Address, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_1, 0x00, PCI_CLASS_STORAGE_IDE, 0x00, 0);
+	PciSetBarIo(Address, 4, 16, IdePortIoReadHandler, IdePortIoWriteHandler, IDE_PORT_MASK);
+	Ide.bmdma[0].Buffer = calloc(sizeof(BYTE), IDE_BUFFER_SIZE);
+	Ide.bmdma[1].Buffer = calloc(sizeof(BYTE), IDE_BUFFER_SIZE);
 
-	TimerRegister(0x034fb5e3 * 6, IdeTimerHandler);
+	//TimerRegister(MSECONDS_TO_NS(10), IdeTimerHandler, NULL);
+	TimerRegister(TICK_PERIOD, IdeTimerHandler, NULL);
 }

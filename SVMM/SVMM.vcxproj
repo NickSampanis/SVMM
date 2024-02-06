@@ -142,8 +142,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="acpi.c" />
+    <ClCompile Include="apic.c" />
     <ClCompile Include="bios.c" />
     <ClCompile Include="bitmap.c" />
+    <ClCompile Include="cdrom.c" />
     <ClCompile Include="cmos.c" />
     <ClCompile Include="dma.c" />
     <ClCompile Include="gui.c" />
@@ -152,7 +155,7 @@
     <ClCompile Include="haxm.c" />
     <ClCompile Include="i440fx.c" />
     <ClCompile Include="ide.c" />
-    <ClCompile Include="kb8042.c" />
+    <ClCompile Include="ioapic.c" />
     <ClCompile Include="parallel.c" />
     <ClCompile Include="piix3.c" />
     <ClCompile Include="ps2.c" />
@@ -162,6 +165,7 @@
     <ClCompile Include="serial.c" />
     <ClCompile Include="sparse.c" />
     <ClCompile Include="SVMM.c" />
+    <ClCompile Include="SvmmDbgServer.c" />
     <ClCompile Include="timer.c" />
     <ClCompile Include="vga.c" />
     <ClCompile Include="vgacore.c" />
@@ -169,10 +173,14 @@
     <ClCompile Include="windbg.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="acpi.h" />
+    <ClInclude Include="apic.h" />
     <ClInclude Include="bios.h" />
     <ClInclude Include="bitmap.h" />
+    <ClInclude Include="cdrom.h" />
     <ClInclude Include="cmos.h" />
     <ClInclude Include="dma.h" />
+    <ClInclude Include="exdi.h" />
     <ClInclude Include="gui.h" />
     <ClInclude Include="gvm.h" />
     <ClInclude Include="gvm_types.h" />
@@ -181,7 +189,7 @@
     <ClInclude Include="haxm.h" />
     <ClInclude Include="i440fx.h" />
     <ClInclude Include="ide.h" />
-    <ClInclude Include="kb8042.h" />
+    <ClInclude Include="ioapic.h" />
     <ClInclude Include="kvm.h" />
     <ClInclude Include="parallel.h" />
     <ClInclude Include="piix3.h" />
@@ -192,6 +200,7 @@
     <ClInclude Include="serial.h" />
     <ClInclude Include="sparse.h" />
     <ClInclude Include="SVMM.h" />
+    <ClInclude Include="SvmmDbgServer.h" />
     <ClInclude Include="timer.h" />
     <ClInclude Include="vgacore.h" />
     <ClInclude Include="vga_bitmap.h" />

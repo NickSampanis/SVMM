@@ -7,8 +7,9 @@ DMA_CONTROLLER Dma[2];
 
 #ifdef GVM
 extern struct kvm_run* kvm_run;
-extern DWORD kvm_events;
 #endif
+
+extern DWORD svmm_events;
 
 VOID DmaInitialize(VOID)
 {
@@ -339,7 +340,7 @@ static VOID DmaControlHoldRequestLine(ULONG DmaNumber)
 		if (DmaNumber) {
 #ifdef GVM
 			kvm_run->user_event_pending = 0;
-			kvm_events &= ~USER_EVENT_DMA;
+			svmm_events &= ~EVENT_DMA;
 
 #endif
 		}
@@ -355,7 +356,7 @@ static VOID DmaControlHoldRequestLine(ULONG DmaNumber)
 			if (DmaNumber) {
 #ifdef GVM
 				kvm_run->user_event_pending = 1;
-				kvm_events |= USER_EVENT_DMA;
+				svmm_events |= EVENT_DMA;
 #endif
 			}
 			else 
@@ -431,7 +432,7 @@ VOID DmaRaiseHoldAcknowledge()
 			Dma[DmaNumber].Channels[i].CurrentAddressRegister = Dma[DmaNumber].Channels[i].BaseAddressRegister;
 			Dma[DmaNumber].Channels[i].CurrentCountRegister = Dma[DmaNumber].Channels[i].BaseCountRegister;
 		}
-		kvm_events &= ~USER_EVENT_DMA;
+		svmm_events &= ~EVENT_DMA;
 		Dma[DmaNumber].DmaAck[i] = 0;
 		if (!DmaNumber) {
 			DmaSetHoldRequest(4, 0);

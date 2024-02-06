@@ -1,11 +1,11 @@
 #pragma once
 #include <Windows.h>
 
-#define IDE_COMMAND_START   (1 << 0)
-#define IDE_COMMAND_WRITE   (1 << 3)
+#define IDE_BDMA_COMMAND_START   (1 << 0)
+#define IDE_BDMA_COMMAND_WRITE   (1 << 3)
 
 #define IDE_STATUS_ACTIVE       (1 << 0)
-#define IDE_STATUS_ERROR        (1 << 1)
+//#define IDE_STATUS_ERROR        (1 << 1)
 #define IDE_STATUS_INTERRUPT    (1 << 2)
 #define IDE_STATUS_WRITE        (1 << 3)
 #define IDE_STATUS_START        (1 << 4)
@@ -31,6 +31,7 @@ typedef struct BMDMA {
     DWORD PrdTable;
     DWORD PrdCurrent;
     BYTE* Buffer;
+    BYTE DataReady;
     DWORD BufferOffset;
 } BMDMA;
 
@@ -39,3 +40,7 @@ struct ide {
 };
 
 VOID IdeInitialize();
+VOID IdeSetIrq(BYTE Channel);
+VOID IdeStartTransfer(BYTE Channel);
+DWORD IdeBdmaPresent();
+

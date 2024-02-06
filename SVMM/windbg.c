@@ -560,9 +560,9 @@ KdParsePacket(KD_PACKET* req)
                 Registers.context._idt.limit = special.Idtr.Limit;
                 Registers.xcr0 = special.Xcr0;
                 Registers.context._tr.selector = special.Tr;
-
+                SvmmSetRegisters(&Registers);
                 //RIP = special.LastBranchFromRip;
-//memcpy((BYTE*)(manipRep + 1), &special, sizeof(special));
+                memcpy((BYTE*)(manipRep + 1), &special, sizeof(special));
                 break;
             }
             KdSendPacketAck(rep);
@@ -648,6 +648,7 @@ KdParsePacket(KD_PACKET* req)
             Registers.context._dr6 = ctx.Dr6;
             Registers.context._dr7 = ctx.Dr7;
             KdSendPacketAck(rep);
+            SvmmSetRegisters(&Registers);
             break;
         case DbgKdContinueApi:
             exit(-1);
@@ -885,6 +886,7 @@ KdParsePacket(KD_PACKET* req)
             memcpy(ctxBuffer + manipRep->u.SetContextEx.Offset, (BYTE*)(manipReq + 1), manipRep->u.SetContextEx.ByteCount);
             rep->length += (USHORT)manipRep->u.SetContextEx.BytesCopied;
             KdSendPacketAck(rep);
+            SvmmSetRegisters(&Registers);
             break;
         case DbgKdRestoreBreakPointApi:
             *manipRep = *manipReq;

@@ -2,6 +2,8 @@
 #define CMOS_H
 #include <Windows.h>
 
+
+
 #define  REG_SEC                     0x00
 #define  REG_SEC_ALARM               0x01
 #define  REG_MIN                     0x02
@@ -24,15 +26,41 @@
 #define  REG_IBM_CENTURY_BYTE        0x32  /* alternatives */
 #define  REG_IBM_PS2_CENTURY_BYTE    0x37  /* alternatives */
 
+//   boot device codes:
+//     0x00 : not defined
+//     0x01 : first floppy
+//     0x02 : first harddrive
+//     0x03 : first cdrom
+//     0x04 - 0x0f : PnP expansion ROMs (e.g. Etherboot)
+//     else : boot failure
+
+#define CMOS_BOOT_CD						3
+#define CMOS_BOOT_HD						2
+
+#define CMOS_BOOT_REG						0x3d
+#define CMOS_FAST_BOOT						0x3f
+
+#define BASE_MEMORY_IN_K  640
+
 typedef struct _CMOS_STATE {
 	BYTE Registers[256];
 	BYTE CmosAddress;
 	BYTE CmosExtAddress;
+	BYTE    timeval_change;
+	BYTE    rtc_mode_12hour;
+	BYTE    rtc_mode_binary;
+	BYTE    rtc_sync;
+	BYTE irq_enabled;
+	time_t    timeval;
+	DWORD PeriodicIntervalUsec;
 
 } CMOS_STATE;
 
 VOID CmosInitialize();
 ULONG CmosPortIoReadHandler(ULONG64 Address, ULONG Length);
 VOID CmosPortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length);
-
+VOID CmosSetRegister(BYTE Address, BYTE Value);
+BYTE CmosGetRegister(BYTE Address);
+VOID CmosSetupMemory(SIZE_T MemorySize);
+VOID CmosCheckSum(VOID);
 #endif

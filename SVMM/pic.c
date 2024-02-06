@@ -4,19 +4,22 @@
 #include "gvm.h"
 #include "gvm.h"
 #include "pci.h"
+#include "ioapic.h"
 #include <stdio.h>
 
 static PIC Pic[2];
 
 #ifdef HAXM
-
 extern HANDLE hHaxCpu;
 extern volatile struct hax_tunnel* tunnel;
-
 #elif GVM
 extern HANDLE hGvmCpu;
 extern struct kvm_run* kvm_run;
 #endif
+
+extern DWORD svmm_events;
+extern BYTE RequestInterruptWindow;
+
 
 //BX_CPU_C::handleAsyncEvent priority handle event
 //Priority 1: Hardware Reset and Machine Checks
@@ -94,6 +97,7 @@ VOID PicService(PIC* Pic)
 			if (!(Pic->InterruptInService & (1 << irq)) && Pic->InterruptRequest & (1 << irq)) {
 				Pic->Raised = 1;
 				Pic->InterruptNumber = irq + Pic->CurrentOffset;
+				/*
 #ifdef HAXM
 				Ret = DeviceIoControl(hHaxCpu, HAX_VCPU_IOCTL_INTERRUPT, &Vector, sizeof(Vector), NULL, 0, &Bytes, NULL);
 				if (!Ret) {
@@ -110,6 +114,10 @@ VOID PicService(PIC* Pic)
 					return;
 				}
 #endif
+				*/
+				svmm_events |= EVENT_PENDING_INTR;
+				RequestInterruptWindow = 1;
+
 			}
 		}
 	}
@@ -134,12 +142,16 @@ VOID PicService(PIC* Pic)
 		Pic->InterruptNumber = irq + Pic->CurrentOffset;
 		/* master */
 		if (Pic->InitCmd[2] & ICW3_CASCADE_ENABLE) {
+			/*
 #ifdef HAXM
 			tunnel->request_interrupt_window = 1;
 #elif GVM
 			kvm_run->request_interrupt_window = 1;
-
 #endif
+			*/
+			svmm_events |= EVENT_PENDING_INTR;
+			RequestInterruptWindow = 1;
+
 		}
 		else {
 			/* if slave, raise master's irq 2*/
@@ -151,6 +163,7 @@ BYTE PicIAC()
 {
 	BYTE vector, irq;
 
+	svmm_events &= ~EVENT_PENDING_INTR;
 	irq = Pic[0].InterruptNumber - Pic[0].CurrentOffset;
 	Pic[0].Raised = 0;
 
@@ -182,55 +195,17 @@ BYTE PicIAC()
 
 	return vector;
 }
-/*
-BYTE PicIAC()
-{
-	BYTE Vector;
 
-	Pic[0].Raised = 0;
-	if (~Pic[0].InterruptMask & Pic[0].InterruptRequest)
-		return Pic[0].CurrentOffset + Pic[0].InterruptNumber;
-	
-	if (Pic[0].EdgeLevel & (1 << Pic[0].InterruptNumber))
-		Pic[0].InterruptRequest &= ~(1 << Pic[0].InterruptNumber);
-	
-	if (Pic[0].Mode & MODE_NORMAL_EOI)
-		Pic[0].InterruptInService |= (1 << Pic[0].InterruptNumber);
-	else if (Pic[0].Mode & MODE_AUTO_EOI)
-		Pic[0].CurrentPriority |= Pic[0].InterruptNumber;
-
-	if (Pic[0].InterruptNumber != 2) {
-		Vector = Pic[0].InterruptNumber + Pic[0].CurrentOffset;
-	}
-	else {
-		Pic[1].Raised = 0;
-		Pic[0].InterruptPin &= ~(1 << 2);
-
-		if (Pic[1].InterruptRequest & ~Pic[1].InterruptMask)
-			return Pic[1].CurrentOffset + 7;
-	
-		Vector = Pic[1].InterruptNumber + Pic[1].CurrentOffset;
-
-		if (Pic[1].EdgeLevel & (1 << Pic[1].InterruptNumber))
-			Pic[1].InterruptRequest &= ~(1 << Pic[1].InterruptNumber);
-
-		if (Pic[1].Mode & MODE_NORMAL_EOI)
-			Pic[1].InterruptInService |= (1 << Pic[1].InterruptNumber);
-		else if (Pic[1].Mode & MODE_AUTO_EOI)
-			Pic[1].CurrentPriority |= Pic[1].InterruptNumber;	
-		PicService(&Pic[1]);
-	}
-	PicService(&Pic[0]);
-	return Vector;
-}
-*/
 
 
 VOID PicLowerIrq(BYTE IrqNumber)
 {
 	BYTE i, irq;
 
-	
+	/* forward to IOAPIC */
+	if (IrqNumber != 2)
+		IoApicSetIrq(IrqNumber, 0);
+
 	i = (0x7 < IrqNumber) ? 1 : 0;
 	irq = 1 << (IrqNumber & 7);
 	if (IrqNumber > 7 || !(Pic[i].InterruptPin & irq))
@@ -244,11 +219,14 @@ VOID PicRaiseIrq(BYTE IrqNumber)
 {
 	BYTE i, irq;
 
+	/* forward to IOAPIC */
+	if (IrqNumber != 2)
+		IoApicSetIrq(IrqNumber, 1);
 
 	i = (0x7 < IrqNumber) ? 1 : 0;
 	irq = 1 << (IrqNumber & 7);
 
-	if (IrqNumber > 15 || Pic[i].InterruptPin & irq)
+	if (IrqNumber > 15 || !(Pic[i].InterruptPin & irq))
 		return;
 	Pic[i].InterruptPin |= irq;
 	Pic[i].InterruptRequest |= irq;
@@ -256,38 +234,8 @@ VOID PicRaiseIrq(BYTE IrqNumber)
 	
 }
 
-VOID PicInterrupt(DWORD Vector)
-{
-	DWORD Bytes;
-	BOOL Ret;
 
-	/*
-	if (Pic[0].Raised)
-		interrupt.irq = Pic[0].InterruptNumber;
-	else if (Pic[1].Raised)
-		interrupt.irq = Pic[1].InterruptNumber;
-	else
-		return;
-	*/
 
-#ifdef HAXM
-	Ret = DeviceIoControl(hHaxCpu, HAX_VCPU_IOCTL_INTERRUPT, &Vector, sizeof(Vector), NULL, 0, &Bytes, NULL);
-	if (!Ret) {
-		fprintf(stderr, "HAX_VCPU_IOCTL_INTERRUPT 0x%x", GetLastError());
-		return;
-	}
-#elif GVM
-	struct kvm_interrupt interrupt;
-
-	interrupt.irq = Vector;
-	Ret = DeviceIoControl(hGvmCpu, GVM_INTERRUPT, &interrupt, sizeof(interrupt), NULL, 0, &Bytes, NULL);
-	if (!Ret) {
-		fprintf(stderr, "GVM_INTERRUPT 0x%x", GetLastError());
-		return;
-	}
-#endif
-
-}
 VOID PicSetMode(BYTE Master, BYTE EdgeLevel)
 {
 	if (Master) 

@@ -88,7 +88,7 @@ struct kvm_irqchip {
 
 /* flags */
 #define RT_BIT_32(bit)     (1 << bit)
-#define USER_EVENT_DMA	   (1 << 0)
+#define MSR_BUF_SIZE 4096
 
 /* For GVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -313,6 +313,9 @@ struct kvm_enable_cap {
 #define GVM_GET_VCPU_MMAP_SIZE    _IO(KVMIO,   0x04) /* in bytes */
 #define GVM_GET_SUPPORTED_CPUID   _IOWR(KVMIO, 0x05, struct kvm_cpuid)
 #define GVM_GET_EMULATED_CPUID	  _IOWR(KVMIO, 0x09, struct kvm_cpuid)
+
+#define GVM_MAX_CPUID_ENTRIES 80
+
    /*
 	* Extension capability list.
 	*/
@@ -552,6 +555,14 @@ struct kvm_msi {
 #define GVM_X2APIC_API_USE_32BIT_IDS            (1ULL << 0)
 #define GVM_X2APIC_API_DISABLE_BROADCAST_QUIRK  (1ULL << 1)
 
+/* Intel Core-based CPU performance counters */
+#define MSR_CORE_PERF_FIXED_CTR0	0x00000309
+#define MSR_CORE_PERF_FIXED_CTR1	0x0000030a
+#define MSR_CORE_PERF_FIXED_CTR2	0x0000030b
+
+#define MSR_CORE_PERF_FIXED_CTR_CTRL 0x0000038d
+#define MSR_CORE_PERF_GLOBAL_CTRL 0x0000038f
+#define MSR_APIC_BASE 0x800
 
 NTSTATUS gvm_get_registers(struct Registers* Registers);
 

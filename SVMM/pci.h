@@ -3,26 +3,33 @@
 #include <Windows.h>
 
 #define BX_PCI_BAR_TYPE_NONE 0
-#define BX_PCI_BAR_TYPE_MEM  1
-#define BX_PCI_BAR_TYPE_IO   2
+#define BX_PCI_BAR_TYPE_IO   1
+#define BX_PCI_BAR_TYPE_MEM  2
 
-#define BX_MAX_PCI_DEVICES 20
 
-#define BX_PCI_DEVICE(device, function)					((device) << 3 | (function))
-#define PCI_DEVFUNC_OFFSET_TO_ADDRESS(devFunc, offset)	((devFunc << 8) | (offset))
+#define MAX_PCI_DEVICES_PER_BUS (256)
+#define MAX_BUSES				(2)
 
-#define PCI_DEVFUNC_TO_ADDRESS(device, function)		((device << 11) | (function << 8))
-#define PCI_ADDRESS_TO_BUS(address)						((address >> 16) & 0xff)
-#define PCI_ADDRESS_TO_FUNCTION(address)				((address >> 8) & 7)
-#define PCI_ADDRESS_TO_DEVICE(address)					((address >> 11) & 0xff)
-#define PCI_ADDRESS_TO_FUNCTION_DEVICE(address)			((address >> 8) & 0xff)
-#define PCI_ADDRESS_TO_OFFSET(address)					((address) & 0xff)
+#define BX_PCI_DEVICE(device, function)						((device) << 3 | (function))
+#define PCI_DEVFUNC_OFFSET_TO_ADDRESS(bus, devFunc, offset)	((bus << 16) | (devFunc << 8) | (offset))
+
+#define PCI_DEVFUNC_TO_ADDRESS(device, function)			((device << 11) | (function << 8))
+#define PCI_ADDRESS_TO_BUS(address)							((address >> 16) & 0xff)
+#define PCI_ADDRESS_TO_FUNCTION(address)					((address >> 8) & 7)
+#define PCI_ADDRESS_TO_DEVICE(address)						((address >> 11) & 0xff)
+#define PCI_ADDRESS_TO_FUNCTION_DEVICE(address)				((address >> 8) & 0xff)
+#define PCI_ADDRESS_TO_OFFSET(address)						((address) & 0xff)
 
 #define PCI_CONF_HDR_TYPE		0x0E
 #define PCI_CONF_BAR0			0x10
+#define PCI_CONF_BAR1			0x14
+#define PCI_CONF_BAR2			0x18
+#define PCI_CONF_BAR3			0x1C
+#define PCI_CONF_BAR4			0x20
 #define PCI_CONF_BAR5			0x24
 #define PCI_CONF_ROM_ADDRESS	0x30
 #define PCI_CONF_IRQ_LINE		0x3C
+#define PCI_CONF_IRQ_PIN     		0x3D
 
 #define PCI_SLOTS				2
 
@@ -65,13 +72,18 @@
 #define PCI_DEVICE_ID_INTEL_82371AB     0x7111
 #define PCI_DEVICE_ID_INTEL_82371AB_3   0x7113
 
+#define PCI_INTA 1
+#define PCI_INTB 2
+#define PCI_INTC 3
+#define PCI_INTD 4
+
 #define PCI_VENDOR_ID_IBM               0x1014
 #define PCI_VENDOR_ID_APPLE             0x106b
 
 typedef ULONG(*ReadPortIoHandlerCallback)(ULONG Address, ULONG Length);
 typedef VOID(*WritePortIoHandlerCallback)(ULONG Address, ULONG Value, ULONG Length);
 
-typedef ULONG(*ReadMMIOHandlerCallback)(ULONG Address, BYTE *Data, ULONG Length);
+typedef VOID(*ReadMMIOHandlerCallback)(ULONG Address, BYTE *Data, ULONG Length);
 typedef VOID(*WriteMMIOHandlerCallback)(ULONG Address, BYTE *Data, ULONG Length);
 
 NTSTATUS RegisterMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandler, ReadMMIOHandlerCallback ReadHandler);
@@ -90,20 +102,23 @@ NTSTATUS RemovePortIoHandler(ULONG Address);
 typedef ULONG(*ReadPciConfigHandlerCallback)(VOID *Pci, ULONG Address, ULONG Length);
 typedef VOID(*WritePciConfigHandlerCallback)(VOID *Pci, ULONG Address, ULONG Value, ULONG Length);
 
+VOID PciInitialize(VOID);
 NTSTATUS RegisterPciHandler(ULONG Address, WritePciConfigHandlerCallback WriteHandler, ReadPciConfigHandlerCallback ReadHandler);
 VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length);
 ULONG ReadPciConfHandler(ULONG Address, ULONG Length);
 VOID InitPciConfig(ULONG Address, USHORT vid, USHORT did, BYTE rev, ULONG classc, BYTE headt, BYTE intpin);
-void PciSetBarIo(BYTE DeviceNumber, BYTE BarNumber, USHORT size, ReadPortIoHandlerCallback ReadPortHandler,
-	WritePortIoHandlerCallback WritePortHandler, DWORD Mask);
-void PciSetBarMmio(BYTE DeviceNumber, BYTE BarNumber, DWORD size, ReadMMIOHandlerCallback ReadMMIOHandler,
+void PciSetBarIo(ULONG Address, BYTE BarNumber, USHORT size, ReadPortIoHandlerCallback ReadPortHandler,
+	WritePortIoHandlerCallback WritePortHandler, ULONG64 Mask);
+void PciSetBarMmio(ULONG Address, BYTE BarNumber, DWORD size, ReadMMIOHandlerCallback ReadMMIOHandler,
 	WriteMMIOHandlerCallback WriteMMIOHandler);
+VOID PciSetIrq(ULONG Address, BYTE line, BYTE level);
+
 
 struct pci_bar {
 	BYTE type;
 	DWORD size;
 	DWORD addr;
-	DWORD mask;
+	ULONG64 mask;
 	VOID* WriteHandler;
 	VOID* ReadHandler;
 };

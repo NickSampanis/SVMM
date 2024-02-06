@@ -3,6 +3,8 @@
 #include "pci.h"
 #include "timer.h"
 #include "pic.h"
+#include "cmos.h"
+
 
 PS2 Ps2;
 
@@ -11,7 +13,9 @@ VOID Ps2Initialize()
 	memset(&Ps2, '\0', sizeof(Ps2));
 	RegisterPortIoHandler(0x60, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
 	RegisterPortIoHandler(0x64, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
-	TimerRegister(0x034fb5e3 * 6, Ps2TimerHandler);
+	//TimerRegister(MSECONDS_TO_NS(10), Ps2TimerHandler, NULL);
+	TimerRegister(TICK_PERIOD, Ps2TimerHandler, NULL);
+	CmosSetRegister(REG_EQUIPMENT_BYTE,  CmosGetRegister(REG_EQUIPMENT_BYTE) | 0x04);
 }
 
 VOID Ps2EnableMouseClock(BYTE Value)
@@ -47,12 +51,10 @@ VOID Ps2QueueByte(BYTE Data, BYTE Device)
 			exit(-1);
 		}
 		Ps2.ControllerQueue[Ps2.ControllerQueueIndex++] = Data;
-		return;
 	}
-	if (Device == KEYBOARD_DEVICE) {
+	else if (Device == KEYBOARD_DEVICE) {
 		Ps2.StatusRegister |= STATUS_OUTPUT_KB_BUFFER_FULL;
-		Ps2.StatusRegister &= ~STATUS_INPUT_BUFFER_FULL;
-		Ps2.StatusRegister &= ~STATUS_OUTPUT_MS_BUFFER_FULL;
+		Ps2.StatusRegister &= ~(STATUS_INPUT_BUFFER_FULL | STATUS_OUTPUT_MS_BUFFER_FULL);
 		Ps2.KeyboardBuffer = Data;
 		Ps2.DataRegister |= DATA_KB_INTERRUPT;
 	}
@@ -85,35 +87,29 @@ ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 		case DATA_REGISTER:
 			if (Ps2.StatusRegister & STATUS_OUTPUT_MS_BUFFER_FULL) {
 				Ret = Ps2.MouseBuffer;
-				Ps2.StatusRegister &= ~STATUS_OUTPUT_MS_BUFFER_FULL;
-				Ps2.StatusRegister &= ~STATUS_OUTPUT_KB_BUFFER_FULL;
-				Ps2.StatusRegister &= ~STATUS_INPUT_BUFFER_FULL;
+				Ps2.StatusRegister &= ~(STATUS_OUTPUT_MS_BUFFER_FULL | STATUS_OUTPUT_KB_BUFFER_FULL | STATUS_INPUT_BUFFER_FULL);
 				Ps2.DataRegister &= ~DATA_MS_INTERRUPT;
 				Ps2.MouseBuffer = 0;
 				if (Ps2.ControllerQueueIndex) {
 					Ps2.MouseBuffer = Ps2.ControllerQueue[0];
-					Ps2.ControllerQueueIndex--;
-					Ps2.StatusRegister |= STATUS_OUTPUT_KB_BUFFER_FULL;
-					Ps2.StatusRegister |= STATUS_OUTPUT_MS_BUFFER_FULL;
+					Ps2.StatusRegister |= STATUS_OUTPUT_KB_BUFFER_FULL | STATUS_OUTPUT_MS_BUFFER_FULL;
 					Ps2.DataRegister |= DATA_MS_INTERRUPT;
-					memcpy(Ps2.ControllerQueue, Ps2.ControllerQueue + 1, Ps2.ControllerQueueIndex);
+					memcpy(Ps2.ControllerQueue, Ps2.ControllerQueue + 1, --Ps2.ControllerQueueIndex);
 				}
 				PicLowerIrq(12);
 				Ps2ActivateTimer();
 			}
 			else if (Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) {
 				Ret = Ps2.KeyboardBuffer;
-				Ps2.StatusRegister &= ~STATUS_OUTPUT_KB_BUFFER_FULL;
-				Ps2.StatusRegister &= ~STATUS_INPUT_BUFFER_FULL;
-				Ps2.StatusRegister &= ~STATUS_OUTPUT_MS_BUFFER_FULL;
+				Ps2.StatusRegister &= ~(STATUS_OUTPUT_KB_BUFFER_FULL | STATUS_INPUT_BUFFER_FULL | STATUS_OUTPUT_MS_BUFFER_FULL);
 				Ps2.DataRegister &= ~DATA_KB_INTERRUPT;
 				Ps2.KeyboardBuffer = 0;
 				if (Ps2.ControllerQueueIndex) {
+					//BUG OR NOT?
 					Ps2.KeyboardBuffer = Ps2.ControllerQueue[0];
-					Ps2.ControllerQueueIndex--;
 					Ps2.StatusRegister |= STATUS_OUTPUT_KB_BUFFER_FULL;
 					Ps2.DataRegister |= DATA_KB_INTERRUPT;
-					memcpy(Ps2.ControllerQueue, Ps2.ControllerQueue + 1, Ps2.ControllerQueueIndex);
+					memcpy(Ps2.ControllerQueue, Ps2.ControllerQueue + 1, --Ps2.ControllerQueueIndex);
 				}
 				PicLowerIrq(1);
 				Ps2ActivateTimer();
@@ -134,7 +130,7 @@ ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 
 
 /* Write to Mouse Memory */
-VOID Ps2WriteMouse(BYTE ScanCode)
+VOID Ps2WriteMouseMemory(BYTE ScanCode)
 {
 	if (MOUSE_MEMORY_SIZE <= Ps2.Mouse.MouseMemoryIndex) {
 		fprintf(stderr, "mouse internal bufffer is Full\n");
@@ -171,7 +167,7 @@ VOID Ps2SendMouse(BYTE Value)
 	}
 }
 
-BYTE Ps2ReadKeyboard(VOID)
+BYTE Ps2ReadKeyboardMemory(VOID)
 {
 	BYTE ret;
 
@@ -186,7 +182,7 @@ BYTE Ps2ReadKeyboard(VOID)
 }
 
 /* Write to Keyboard Memory */
-VOID Ps2WriteKeyboard(BYTE ScanCode)
+VOID Ps2WriteKeyboardMemory(BYTE ScanCode)
 {
 	if (KEYBOARD_MEMORY_SIZE <= Ps2.Keyboard.KeyboardMemoryIndex) {
 		fprintf(stderr, "KeyboardMemory is Full %d\n", Ps2.Keyboard.KeyboardMemoryIndex);
@@ -198,7 +194,7 @@ VOID Ps2WriteKeyboard(BYTE ScanCode)
 		Ps2EnableKeyboardClock(1);
 }
 
-VOID KeyboardReset(VOID)
+VOID Ps2KeyboardReset(VOID)
 {
 	memset(Ps2.Keyboard.KeyboardMemory, '\0', sizeof(Ps2.Keyboard.KeyboardMemory));
 	Ps2.Keyboard.KeyboardMemoryIndex = 0;
@@ -207,7 +203,7 @@ VOID KeyboardReset(VOID)
 	Ps2.Keyboard.ScanCodeSet = 0;
 	Ps2.Keyboard.LedState = 0;
 	Ps2.Keyboard.Typematic = 0;
-
+	Ps2.StatusRegister &= ~STATUS_OUTPUT_KB_BUFFER_FULL;
 }
 
 VOID Ps2SendKeyboard(BYTE Value)
@@ -219,37 +215,37 @@ VOID Ps2SendKeyboard(BYTE Value)
 			Ps2QueueByte(KBD_REPLY_ACK, KEYBOARD_DEVICE);
 			break;
 		case KBD_CMD_ECHO:
-			Ps2WriteKeyboard(0xEE);
+			Ps2WriteKeyboardMemory(0xEE);
 			break;
 		case KBD_CMD_SCANCODE:
-			Ps2WriteKeyboard(KBD_REPLY_ACK);
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
 			break;
 		case KBD_CMD_GET_ID:
 
 			break;
 		case KBD_CMD_SET_RATE:
-			Ps2WriteKeyboard(KBD_REPLY_ACK);
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
 			break;
 		case KBD_CMD_ENABLE:
 
-			Ps2WriteKeyboard(KBD_REPLY_ACK);
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
 			break;
 		case KBD_CMD_RESET_DISABLE:
-			//TODO: Reset internals
-			KeyboardReset();
-			Ps2WriteKeyboard(KBD_REPLY_ACK);
+			Ps2KeyboardReset();
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
 			break;
 		case KBD_CMD_RESET_ENABLE:
-			//TODO: Reset internals
-			Ps2WriteKeyboard(KBD_REPLY_ACK);
+			Ps2KeyboardReset();
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
 			break;
 		case KBD_CMD_RESET:
-			//TODO: Reset internals
-			Ps2WriteKeyboard(KBD_REPLY_ACK);
-			Ps2WriteKeyboard(KBD_REPLY_POR);
+			
+			Ps2KeyboardReset();
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
+			Ps2WriteKeyboardMemory(KBD_REPLY_POR);
 			break;
 		case CMD_WRITE_MS_OBUF:
-			Ps2WriteKeyboard(KBD_REPLY_ACK);
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
 			break;
 		case 0xf7:  // PS/2 Set All Keys To Typematic
 		case 0xf8:  // PS/2 Set All Keys to Make/Break
@@ -259,7 +255,7 @@ VOID Ps2SendKeyboard(BYTE Value)
 		case 0xfc:  // PS/2 Set Key Type to Make/Break
 		case 0xfd:  // PS/2 Set Key Type to Make
 		default:
-			Ps2WriteKeyboard(KBD_REPLY_RESEND);
+			Ps2WriteKeyboardMemory(KBD_REPLY_RESEND);
 			break;
 	}
 }
@@ -407,7 +403,7 @@ ULONG Ps2TimerPeriodic(DWORD Seconds)
 
 	//check if there is something in internal buffer 
 	if (Ps2.Keyboard.KeyboardMemoryIndex && Ps2.Keyboard.KeyboardClockEnabled) {
-		Ps2.KeyboardBuffer = Ps2ReadKeyboard();
+		Ps2.KeyboardBuffer = Ps2ReadKeyboardMemory();
 		Ps2.StatusRegister |= STATUS_OUTPUT_KB_BUFFER_FULL;
 		Ps2.DataRegister |= DATA_KB_INTERRUPT;
 	}

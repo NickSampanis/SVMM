@@ -1917,7 +1917,9 @@ VOID VgaCoreInitialize()
     RegisterMMIOHandler(0xb0000, VgaCoreMMIOWriteHandler, VgaCoreMMIOReadHandler);
     //RegisterMMIOHandler(0x110000, VgaCoreMMIOWriteHandler2, VgaCoreMMIOReadHandler);
 
-	TimerRegister(0x30d40, VgaCoreTimerHandler);
+    //0x30d40 
+	//TimerRegister(MSECONDS_TO_NS(20), VgaCoreTimerHandler, NULL);
+    TimerRegister(TICK_PERIOD, VgaCoreTimerHandler, NULL);
 
 	VgaCore.num_x_tiles = VgaCore.max_xres / X_TILESIZE +
 		((VgaCore.max_xres % X_TILESIZE) > 0);

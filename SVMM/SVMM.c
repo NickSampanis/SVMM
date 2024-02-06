@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include "SVMM.h"
 #include "windbg.h"
@@ -18,6 +20,13 @@
 #include "gui.h"
 #include "ide.h"
 #include "vgacore.h"
+#include "ioapic.h"
+#include "apic.h"
+#include "pci.h"
+#include "acpi.h"
+#include "exdi.h"
+#include "harddisk.h"
+#include "SvmmDbgServer.h"
 #include <intrin.h>
 #include <CommCtrl.h>
 
@@ -34,52 +43,154 @@ struct hax_fastmmio* mmio;
 extern struct kvm_run* kvm_run;
 extern HANDLE hGvm, hGvmCpu, hGvmVm;
 extern volatile unsigned char* pio_data;
-extern DWORD kvm_events;
 #endif
 
 extern SOCKET windbg_sock;
 extern BYTE Stepping;
+extern struct kvm_msrs* msrs;
+DWORD svmm_events;
 
 //GLOBALS
-PVOID Ram;
+BYTE* Ram;
+BYTE* MemoryEnd;
 ULONG64 RamSize;
 struct Registers Registers;
+BYTE RequestInterruptWindow;
 
-BYTE* SvmmGetHostAddress(ULONG64 GuestPa)
+BYTE *GetHostPageFromGPA(ULONG64 gpaAddress)
 {
-	ULONG64 gpaAddress;
-	/*
-	if (Registers.context._cr0 & 1) {
-		gpaAddress = GuestPa;
-	}
-	else {
-		//gvaAddress = GuestVa + Registers.context._cs.selector * 16;
-		gpaAddress = GuestPa | (ULONG64)Registers.context._cs.selector << 4;
-	}
-	*/
-	gpaAddress = GuestPa;
+	BYTE* hostAddress;
+
 	if (gpaAddress >= 0xFFFE0000 && gpaAddress <= 0xFFFFFFFF) {
 		//0xFFFE0000 = Ram + RamSize, 0xFFFF0000 = Ram + RamSize + 0x10000
 		gpaAddress &= 0x000FFFFF;
 		gpaAddress = ((gpaAddress >> 16) & 1) << 4;
-		gpaAddress += (ULONG64)Ram + RamSize;
+		hostAddress = (BYTE*)Ram + RamSize + gpaAddress;
 	}
 	else if (gpaAddress >= 0xE0000 && gpaAddress <= 0xFFFFF) {
-		gpaAddress += (ULONG64)Ram + RamSize;
+		hostAddress = (BYTE*)Ram + RamSize + gpaAddress;
 	}
-	/*
-	else if (gpaAddress >= 0x0000 && gpaAddress <= 0x20000) { //TODO CHANGE IT TO RAM
-		if (!(Registers.context._cr0 & 1)) {
-			gpaAddress = GuestPa | (ULONG64)Registers.context._cs.selector << 4;
-		}
-		gpaAddress += (ULONG64)Ram + RamSize + 0xE0000;
-	}
-	*/
 	else {
-		gpaAddress += (ULONG64)Ram;
+		hostAddress = (BYTE*)Ram + gpaAddress;
+	}
+	if (hostAddress >= MemoryEnd) {
+		fprintf(stderr, "Error hostAddress >= MemoryEnd gpa Address = 0x%llx\n", gpaAddress);
+		exit(-1);
 	}
 
-	return (BYTE*)gpaAddress;
+	return hostAddress;
+}
+
+LONG SvmmGetCpuMode()
+{
+	if (!(Registers.context._cr0 & 1))
+		return CPU_MODE_REAL;
+	else if (Registers.context._cr4 & (1 << 5))
+		return CPU_MODE_LONG_MODE;
+	else
+		return CPU_MODE_PROTECTED;
+}
+
+LONG64 SvmmGetRip()
+{
+	LONG Mode;
+
+	Mode = SvmmGetCpuMode();
+
+	if (Mode == CPU_MODE_REAL)
+		return Registers.context._rip | (ULONG64)Registers.context._cs.selector << 4;
+	else
+		return Registers.context._rip;
+}
+
+//GetGVAFromGPA
+/*
+ULONG64 Pml4GetGpaFromGva(ULONG64 Gva)
+{
+	ULONG64 pte, phys;
+	int leaf;
+
+	phys = (ULONG64)GetHostPageFromGPA(Registers.context._cr3 & BX_CR3_PAGING_MASK);
+	for (leaf = 3; leaf >= 0; --leaf) {
+		pte = phys + ((Gva >> (9 + 9 * leaf)) & ((1 << 9) - 1));
+		if (leaf == 2 && *(ULONG64*)pte & PAGE_1GB_ENABLED)
+			return (*(ULONG64*)pte & PAGING_MASK) + (Gva & 0x1fffffff);
+		if (leaf == 1 && *(ULONG64*)pte & PAGE_2MB_ENABLED)
+			return (*(ULONG64*)pte & PAGING_MASK) + (Gva & 0x1fffff);
+		phys = (ULONG64)GetHostPageFromGPA(*(ULONG64*)pte & PAGING_MASK);
+	}
+	//printf("dword = 0x%x\n", *(DWORD*)(phys + (va & 0xfff)));
+	return (*(ULONG64*)pte & PAGING_MASK) + (Gva & 0xfff);
+
+}
+*/
+
+
+static BYTE Pml4Levels[] = { 9, 9, 9, 9 };
+static BYTE PdePaeLevels[] = { 9, 9, 2 };
+static BYTE PdeNoPaeLevels[] = { 10, 10 };
+
+ULONG64 Pml4GetGpaFromGva(ULONG64 Gva, BYTE* Levels, ULONG LevelSize, ULONG EntrySize)
+{
+	ULONG64 pte, phys, entry;
+	LONG i, bitsSum;
+	CHAR leaf;
+
+	phys = (ULONG64)GetHostPageFromGPA(Registers.context._cr3 & BX_CR3_PAGING_MASK);
+	entry = 0;
+	for (leaf = LevelSize - 1; leaf >= 0; --leaf) {
+		bitsSum = 12;
+		for (i = 0; i < leaf; i++)
+			bitsSum += Levels[i];
+
+		pte = phys + ((Gva >> bitsSum) & ((1ULL << Levels[leaf]) - 1)) * EntrySize;
+		if (EntrySize == sizeof(ULONG))
+			entry = *(ULONG *)pte;
+		else
+			entry = *(ULONG64*)pte;
+
+		if (leaf == 2 && entry & PAGE_1GB_ENABLED)
+			return (entry & PAGING_MASK) + (Gva & 0x1fffffff);
+		if (leaf == 1 && entry & PAGE_2MB_ENABLED)
+			return (entry & PAGING_MASK) + (Gva & 0x1fffff);
+		phys = (ULONG64)GetHostPageFromGPA(entry & PAGING_MASK);
+		if (!phys)
+			return 0;
+	}
+	//printf("dword = 0x%x\n", *(DWORD*)(phys + (va & 0xfff)));
+	return (entry & PAGING_MASK) + (Gva & 0xfff);
+
+}
+
+ULONG64 SvmmGetGpaFromGva(ULONG64 GuestVirtualAddress)
+{
+	ULONG64 gpa;
+
+	gpa = 0;
+	if (Registers.context._efer & EFER_LME)
+		gpa = Pml4GetGpaFromGva(GuestVirtualAddress, Pml4Levels, sizeof(Pml4Levels), 8);
+	else if (Registers.context._cr4 & CR4_PAE)
+		gpa = Pml4GetGpaFromGva(GuestVirtualAddress, PdePaeLevels, sizeof(PdePaeLevels), 8);
+	else 
+		gpa = Pml4GetGpaFromGva(GuestVirtualAddress, PdeNoPaeLevels, sizeof(PdeNoPaeLevels), 4);
+
+	return gpa;
+}
+
+/* Returns Host Virtual address for any given gpa or gva */
+BYTE* SvmmGetHostAddress(ULONG64 GuestAddress)
+{
+	BYTE *hostAddress;
+	ULONG64 gpaAddress;
+
+	gpaAddress = GuestAddress;
+	/* paging enabled */
+	
+	if (Registers.context._cr0 & CR0_PG)
+		gpaAddress = SvmmGetGpaFromGva(GuestAddress);
+	
+
+	return GetHostPageFromGPA(gpaAddress);
 }
 
 
@@ -145,6 +256,7 @@ error:
 	CloseHandle(hFile);
 	return -1;
 }
+
 
 
 /*
@@ -234,7 +346,7 @@ void SvmmPrintRegisters(struct Registers* Registers)
 	printf("R13 = 0x%llx\n", Registers->context._r13);
 	printf("R14 = 0x%llx\n", Registers->context._r14);
 	printf("R15 = 0x%llx\n", Registers->context._r15);
-	printf("RIP = 0x%llx\n", Registers->context._rip);
+	printf("RIP = 0x%llx\n", SvmmGetRip());
 	printf("eflgs = 0x%llx\n", Registers->context._rflags);
 
 	printf("idtr.base = 0x%llx\n", Registers->context._idt.base);
@@ -294,8 +406,8 @@ void SvmmPrintRegisters(struct Registers* Registers)
 	printf("fs long_mode = 0x%x\n", Registers->context._fs.long_mode);
 	printf("fs granularity = 0x%x\n\n", Registers->context._fs.granularity);
 	
-	gvaAddress = SvmmGetHostAddress(Registers->context._rip);
-	printf("GUEST RIP = 0x%llx\n", Registers->context._rip);
+	gvaAddress = SvmmGetHostAddress(SvmmGetRip());
+	printf("GUEST RIP = 0x%llx\n", SvmmGetRip());
 	printf("HOST  RIP = 0x%llx\n", (ULONG64)gvaAddress);
 	for (i = 0; i < 8; i++)
 		printf("0x%02x ", ((BYTE *)gvaAddress)[i]);
@@ -309,7 +421,7 @@ VOID SvmmInitializeRegisterState(struct Registers* Registers)
 {
 	memset(Registers, '\0', sizeof(struct Registers));
 	Registers->context._rip = 0x0000FFF0;
-	Registers->context._dr6 = 0xFFFF0FF0;
+	Registers->context._dr6 = DR6_RESERVED;
 	Registers->context._dr7 = 0x00000400;
 	Registers->context._cr0 = 0x60000010;
 	Registers->context._rflags = 0x2;
@@ -395,20 +507,46 @@ NTSTATUS SvmmGetRegisters(struct Registers* Registers)
 	return 0;
 }
 
+VOID SvmmInterrupt(DWORD Vector)
+{
+	DWORD Bytes;
+	BOOL Ret;
+
+
+#ifdef HAXM
+	Ret = DeviceIoControl(hHaxCpu, HAX_VCPU_IOCTL_INTERRUPT, &Vector, sizeof(Vector), NULL, 0, &Bytes, NULL);
+	if (!Ret) {
+		fprintf(stderr, "HAX_VCPU_IOCTL_INTERRUPT 0x%x", GetLastError());
+		return;
+	}
+#elif GVM
+	struct kvm_interrupt interrupt;
+
+	interrupt.irq = Vector;
+	Ret = DeviceIoControl(hGvmCpu, GVM_INTERRUPT, &interrupt, sizeof(interrupt), NULL, 0, &Bytes, NULL);
+	if (!Ret) {
+		fprintf(stderr, "GVM_INTERRUPT 0x%x", GetLastError());
+		return;
+	}
+#endif
+
+}
 
 int main(int argc, char *argv[])
 {
 	NTSTATUS Status;
-	DWORD Bytes, i, vector;
+	DWORD Bytes, i, vector, bytes;
 	BOOL Ret;
-	BYTE Buffer[2048];
+	BYTE Buffer[2048], dbgState;
+	struct kvm_guest_debug kvm_debug;
 
-	RamSize = 256 * MB;
+	RamSize = 1024 * MB;
 	Ram = VirtualAlloc(NULL, RamSize + ROM_SIZE + PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (!Ram) {
 		fprintf(stderr, "VirtualAlloc 0x%x", GetLastError());
 		return -1;
 	}
+	MemoryEnd = Ram + RamSize + ROM_SIZE + PAGE_SIZE;
 	//CreateVm
 #ifdef HAXM
 	Status = haxm_init(Ram, RamSize);
@@ -424,36 +562,76 @@ int main(int argc, char *argv[])
 	SvmmInitializeRegisterState(&Registers);
 	SvmmSetRegisters(&Registers);
 	//Initialize Devices DEV_init_devices
+	TimerInitialize();
+	CmosInitialize();
+	PciInitialize();
 	ParallelInitialize();
 	SerialInitialize();
-	TimerInitialize();
 	I440fxInitialize();
 	Piix3Initialize();
 	PicInitialize();
 	DmaInitialize();
-	CmosInitialize();
 	Ps2Initialize();
 	BiosInitialize();
 	PitInitialize();
 	VgaCoreInitialize();
 	IdeInitialize();
+	HardDiskInitialize();
+	IoApicInitialize();
+	ApicInitialize();
+	AcpiInitialize();
+	CmosSetupMemory(RamSize);
+	CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_CD | (CMOS_BOOT_HD << 4));
+	CmosSetRegister(CMOS_FAST_BOOT, 1);
 
 	//Load Bios At The End Of Ram
-	//Status = SvmmLoadRom("bios.bin", TYPE_SYSTEM_BIOS);
-	Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);
+	Status = SvmmLoadRom("bios.bin", TYPE_SYSTEM_BIOS);
+	//Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);
+	/*
+	Status = SvmmLoadRom("OVMF.fd", TYPE_SYSTEM_BIOS);
 	if (Status < 0) {
 		fprintf(stderr, "SvmmLoadRom 0x%x", Status);
 		goto exit;
 	}
+	*/
+	//UEFI to delete
+	//SvmmLoadUefi();
+	/*
+	HANDLE hFile = CreateFileA("OVMF.fd", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		fprintf(stderr, "Error in CreateFileA 0x%lx\n", GetLastError());
+		return -1;
+	}
+	DWORD fileSize = GetFileSize(hFile, NULL);
+	if (fileSize == INVALID_FILE_SIZE) {
+		fprintf(stderr, "Error in GetFileSize fileSize > ROM_SIZE \n");
+		return -1;
+	}
+	BYTE* buf;
+	DWORD retSize;
+	NTSTATUS status;
+
+	buf = malloc(fileSize);
+	memset(buf, 0xff, fileSize);
+	SetFilePointer(hFile, fileSize - 128 * 1024, NULL, FILE_BEGIN);
+	status = ReadFile(hFile, Ram + RamSize + 0xe0000, 128 * 1024, &retSize, NULL);
+	if (!status) {
+		fprintf(stderr, "Error in ReadFile 0x%lx\n", GetLastError());
+		return -1;
+	}
+	*/
+	//VGA BIOS
+	
 	Status = SvmmLoadRom("VGABIOS-lgpl-latest.bin", TYPE_VGA_BIOS);
 	if (Status < 0) {
 		fprintf(stderr, "SvmmLoadRom 0x%x", Status);
 		goto exit;
 	}
-
+	
 	//Windbg Stub
+	/*
 	if (argv[1]) {
-		Status = WindbgHandshake(argv[1]);
+		//Status = WindbgHandshake(argv[1]);
 		if (Status)
 			goto exit;
 		Stepping = 1;
@@ -465,7 +643,8 @@ int main(int argc, char *argv[])
 			//pkt = (PKD_PACKET)buffer;
 			Status = KdParsePacket((PKD_PACKET)Buffer);
 		} while (Status != DbgKdContinueApi2);
-		KdLoadSymbols("vga.exe", 0x1000, 0x3000, 0x00);
+		
+		KdLoadSymbols("ide.exe", 0x1000, 0x3000, 0x00);
 		do {
 			do {
 				memset(Buffer, '\0', sizeof(Buffer));
@@ -476,9 +655,15 @@ int main(int argc, char *argv[])
 			//pkt = (PKD_PACKET)buffer;
 			Status = KdParsePacket((PKD_PACKET)Buffer);
 		} while (Status != DbgKdContinueApi2);
+		
+		Stepping = 0;
 	}
+	*/
 	SvmmSetRegisters(&Registers);
-	
+	if (argv[1]) {
+		SvmmDbgInit(argv[1]);
+		dbgState = SvmmDbgLoop();
+	}
 	//Hypervisor loop
 	while (1) {
 		//SvmmSetRegisters(&Registers);
@@ -496,8 +681,10 @@ int main(int argc, char *argv[])
 			goto exit;
 		}
 		SvmmGetRegisters(&Registers);
+		
+
 #ifdef __DEBUG__
-		SvmmPrintRegisters(&Registers);
+		//SvmmPrintRegisters(&Registers);
 #endif
 #ifdef HAXM
 		switch (tunnel->_exit_status) {
@@ -703,19 +890,32 @@ int main(int argc, char *argv[])
 				else {
 					WritePortIoHandler(kvm_run->io.port, *(DWORD*)(pio_data + i * kvm_run->io.size), kvm_run->io.size);
 				}
+				
 			}
 			break;
 
 		case GVM_EXIT_INTR:
 #ifdef __DEBUG__
 			printf("GVM_EXIT_INTR\n");
-			//SvmmPrintRegisters();
+			SvmmPrintRegisters(&Registers);
+			/*
 			if (kvm_events & USER_EVENT_DMA) {
 				DmaSetHoldRequest(0, 0);
 				printf("dma %d\n", kvm_run->user_event_pending);
 			}
+			*/
 			scanf_s("%d", &Bytes);
 #endif
+			
+			msrs->nmsrs = 1;
+			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR0;
+			msrs->entries[0].data = (1ULL << 48) - TICK_PERIOD; // | (1 << 3);
+			Ret = DeviceIoControl(hGvmCpu, GVM_SET_MSRS,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
+				(LPOVERLAPPED)NULL);
+			TimerTick(TICK_PERIOD);
+			
 			break;
 		case GVM_EXIT_UNKNOWN:
 			printf("GVM_EXIT_UNKNOWN\n");
@@ -742,9 +942,6 @@ int main(int argc, char *argv[])
 				ReadMMIOHandler(kvm_run->mmio.phys_addr, (BYTE*)kvm_run->mmio.data, kvm_run->mmio.len);
 			else
 				WriteMMIOHandler(kvm_run->mmio.phys_addr, (BYTE*)kvm_run->mmio.data, kvm_run->mmio.len);
-			
-			
-			
 			break;
 		case GVM_EXIT_SHUTDOWN:
 			printf("GVM_EXIT_SHUTDOWN\n");
@@ -753,14 +950,24 @@ int main(int argc, char *argv[])
 		
 		case GVM_EXIT_NMI:
 			printf("GVM_EXIT_NMI\n");
+			msrs->nmsrs = 1;
+			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR0;
+			msrs->entries[0].data = (1ULL << 48) - TICK_PERIOD; // | (1 << 3);
+			Ret = DeviceIoControl(hGvmCpu, GVM_SET_MSRS,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
+				(LPOVERLAPPED)NULL);
+			TimerTick(TICK_PERIOD);
 			//return_system_management_mode();
 			scanf_s("%d", &Bytes);
+			
+			//printf("rip = 0x%llx\n", SvmmGetRip());
 			break;
 		case GVM_EXIT_WATCHDOG:
 #ifdef __DEBUG__
 			printf("GVM_EXIT_WATCHDOG\n");
 #endif
-			
+			/*
 			if (argv[1] && !Stepping) {
 				printf("stepping %d\n", Stepping);
 				memset(Buffer, '\0', sizeof(Buffer));
@@ -776,24 +983,9 @@ int main(int argc, char *argv[])
 					} while (Status != DbgKdContinueApi2);
 				}
 			}
-			
-
-			/*
-			if (argv[1] && !Stepping) {
-				//printf("watchdog %s\n", Stepping ? "stepping" : "running");
-				do {
-					do {
-						memset(Buffer, '\0', sizeof(Buffer));
-						Status = recvfrom(windbg_sock, (char*)Buffer, sizeof(Buffer), 0, NULL, NULL);
-					} while (!Status || Status == -1);
-					if (!Status || Status == -1)
-						break;
-					Status = KdParsePacket((PKD_PACKET)Buffer);
-				} while (Status != DbgKdContinueApi2);
-			}
 			*/
-			//SvmmPrintRegisters(&Registers);
-			TimerTick(0x034fb5e3);
+			TimerTick(MSECONDS_TO_NS(1));
+			
 			//SvmmSetRegisters(&Registers);
 			//scanf_s("%d", &Bytes);
 			break;
@@ -802,11 +994,17 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_IRQ_WINDOW_OPEN:
-			printf("GVM_EXIT_IRQ_WINDOW_OPEN\n");
-			kvm_run->request_interrupt_window = 0;
-			vector = PicIAC();
-			PicInterrupt(vector);
-			//DmaSetHoldRequest(0, 1);
+			//printf("GVM_EXIT_IRQ_WINDOW_OPEN\n");
+			//kvm_run->request_interrupt_window = 0;
+			printf("irq Open\n");
+			exit(-1);
+			if (svmm_events & EVENT_PENDING_INTR)
+				vector = PicIAC();
+			else if (svmm_events & EVENT_PENDING_LAPIC_INTR)
+				vector = ApicAcknowledgeInterrupt();
+			else
+				continue;
+			SvmmInterrupt(vector);
 			//scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_IOAPIC_EOI:
@@ -823,8 +1021,41 @@ int main(int argc, char *argv[])
 			break;
 		case GVM_EXIT_DEBUG:
 			printf("GVM_EXIT_DEBUG\n");
+			printf("rip = 0x%llx\n", SvmmGetRip());
+			BOOL ret;
+
+			msrs = (struct kvm_msrs*)calloc(1, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * 2);
+			msrs->nmsrs = 2;
+			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR_CTRL;
+			msrs->entries[1].index = MSR_CORE_PERF_FIXED_CTR0;
+			ret = DeviceIoControl(hGvmCpu, GVM_GET_MSRS,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
+				(LPOVERLAPPED)NULL);
+			if (!ret) {
+				perror("Driver GVM DeviceIoControl GVM_EXIT_WATCHDOG GVM_GET_MSRS");
+				exit(-1);
+			}
+			printf("msr[0x%x] = 0x%llx\n", msrs->entries[0].index, msrs->entries[0].data);
+			printf("msr[0x%x] = 0x%llx\n", msrs->entries[1].index, msrs->entries[1].data);
+			
+			
+			if (msrs->entries[1].data == 0) {
+				msrs->nmsrs = 1;
+				msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR0;
+				msrs->entries[0].data = (1ULL << 48) - 2; // | (1 << 3);
+				ret = DeviceIoControl(hGvmCpu, GVM_SET_MSRS,
+					msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
+					msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
+					(LPOVERLAPPED)NULL);
+			}
+			
+			free(msrs);
+			
 			//scanf_s("%d", &Bytes);
+			/*
 			KdSendSingleStep();
+			Stepping = 1;
 			do {
 				do {
 					memset(Buffer, '\0', sizeof(Buffer));
@@ -832,33 +1063,25 @@ int main(int argc, char *argv[])
 				} while (Stepping && (!Status || Status == -1));
 				Status = KdParsePacket((PKD_PACKET)Buffer);
 			} while (Status != DbgKdContinueApi2);
-
-			SvmmPrintRegisters(&Registers);
-			/*
-			InBreak = 1;
-			do {
-				do {
-					memset(Buffer, '\0', sizeof(Buffer));
-					Status = recvfrom(windbg_sock, (char*)Buffer, sizeof(Buffer), 0, NULL, NULL);
-				} while (InBreak && (!Status || Status == -1));
-				if (!Status || Status == -1)
-					break;
-				Status = KdParsePacket((PKD_PACKET)Buffer);
-			} while (Status != DbgKdContinueApi2);
-			InBreak = 0;
 			*/
-			//SvmmSetRegisters(&Registers);
-			/*
-			if (Registers.context._rflags & EFLAGS_TF_MASK)
-				KdSendSingleStep();
-			else {
-				memset(&kvm_debug, '\0', sizeof(kvm_debug));
-				kvm_debug.control = GVM_GUESTDBG_ENABLE | GVM_GUESTDBG_USE_SW_BP;
-				DeviceIoControl(hGvmCpu, GVM_SET_GUEST_DEBUG, &kvm_debug, sizeof(kvm_debug), (LPVOID)NULL, 0, &bytes, NULL);
-
+			if (argv[1]) {
+				if (*SvmmGetHostAddress(SvmmGetRip()) == 0xcc || 
+					Registers.context._rip == Registers.context._dr0 || 
+					Registers.context._rip == Registers.context._dr1 || 
+					Registers.context._rip == Registers.context._dr2 || 
+					Registers.context._rip == Registers.context._dr3 ||
+					dbgState == DBG_TYPE_RUN || dbgState == DBG_TYPE_STEP_OVER) {
+					SvmmDbgSend(DBG_TYPE_ON_BREAK, (BYTE*)NULL, 0);
+					dbgState = SvmmDbgLoop();
+				}
+				else if (dbgState == DBG_TYPE_STEP_INTO) {
+					dbgState = SvmmDbgLoop();
+				}
+				
 			}
-			*/
-			//scanf_s("%d", &Bytes);
+		
+			//SvmmPrintRegisters(&Registers);
+			
 			break;
 		case GVM_EXIT_FAIL_ENTRY:
 			printf("GVM_EXIT_FAIL_ENTRY\n");
@@ -866,8 +1089,11 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_SET_TPR:
-			printf("GVM_EXIT_SET_TPR\n");
-			scanf_s("%d", &Bytes);
+			//printf("GVM_EXIT_SET_TPR\n");
+			ApicMMIOWriteHandler(LAPIC_TPR, &kvm_run->cr8, 4);
+			//printf("rip = 0x%llx\n", Registers.context._rip);
+
+			//scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_TPR_ACCESS:
 			printf("GVM_EXIT_TPR_ACCESS\n");
@@ -882,16 +1108,19 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_MTF:
-			printf("GVM_EXIT_MTF\n");
-			SvmmPrintRegisters(&Registers);
-			scanf_s("%d", &Bytes);
-
+			//printf("GVM_EXIT_MTF\n");
+			//SvmmPrintRegisters(&Registers);
+			//scanf_s("%d", &Bytes);
+			printf("rip = 0x%llx\n", Registers.context._rip);
+			//printf("rax = 0x%llx\n", Registers.context._rax);
+			//printf("rcx = 0x%llx\n", Registers.context._rcx);
 			break;
 		default:
 			printf("default\n");
 			scanf_s("%d", &Bytes);
 			break;
 		}
+		
 #endif
 	}
 

@@ -1,15 +1,19 @@
 #include "gvm.h"
 #include "haxm.h"
+#include "timer.h"
 #include <stdio.h>
 
 #define PAGE_SIZE 0x1000
 
 //GLOBALS
-HANDLE hGvm, hGvmCpu, hGvmVm;
+HANDLE hGvmDev, hGvmCpu, hGvmVm;
 struct kvm_run* kvm_run;
 volatile unsigned char* pio_data;
-DWORD kvm_events;
 struct kvm_userspace_memory_region mem_slots[256];
+struct kvm_cpuid *cpuids;
+struct kvm_msr_list* msr_list;
+struct kvm_msrs* msrs;
+
 DWORD mem_slots_num;
 
 //BX_MEM_C::getHostMemAddr
@@ -22,30 +26,126 @@ DWORD mem_slots_num;
 int gvm_init(void* ram, size_t ram_size)
 {
     struct kvm_userspace_memory_region kvm_userspace_mem;
-    DWORD bytes;
+    DWORD bytes, i;
     BOOL ret;
 
-    hGvmCpu = hGvmVm = hGvm = NULL;
-    hGvm = CreateFileA("\\\\.\\gvm", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hGvm == INVALID_HANDLE_VALUE) {
+    hGvmCpu = hGvmVm = hGvmDev = NULL;
+    hGvmDev = CreateFileA("\\\\.\\gvm", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hGvmDev == INVALID_HANDLE_VALUE) {
         perror("Driver GVM isn't loaded");
         return -1;
     }
 
     //create vm
     bytes = 0;
-    DeviceIoControl(hGvm, GVM_CREATE_VM, NULL, 0, &hGvmVm, sizeof(hGvmVm), &bytes, NULL);
+    DeviceIoControl(hGvmDev, GVM_CREATE_VM, NULL, 0, &hGvmVm, sizeof(hGvmVm), &bytes, NULL);
     if (bytes != sizeof(ULONG64) || !hGvmVm) {
         perror("Driver GVM DeviceIoControl GVM_CREATE_VM");
         goto error;
     }
+    /*
+    //GVM_CREATE_IRQCHIP
+    ret = DeviceIoControl(hGvmVm, GVM_CREATE_IRQCHIP,
+        NULL, 0, NULL, 0, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_CREATE_IRQCHIP");
+        goto error;
+    }
+    */
+   
 
-    bytes = 0;
+    cpuids = malloc(sizeof(struct kvm_cpuid_entry) * GVM_MAX_CPUID_ENTRIES + sizeof(struct kvm_cpuid));
+    if (!cpuids) {
+        perror("Driver GVM malloc cpuids");
+        goto error;
+    }
+    memset(cpuids, '\0', sizeof(struct kvm_cpuid_entry) * GVM_MAX_CPUID_ENTRIES + sizeof(struct kvm_cpuid));
+    cpuids->nent = GVM_MAX_CPUID_ENTRIES;
+
+    ret = DeviceIoControl(hGvmDev, GVM_GET_SUPPORTED_CPUID,
+        cpuids, sizeof(struct kvm_cpuid_entry) * GVM_MAX_CPUID_ENTRIES + sizeof(struct kvm_cpuid),
+        cpuids, sizeof(struct kvm_cpuid_entry) * GVM_MAX_CPUID_ENTRIES + sizeof(struct kvm_cpuid), &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_GET_SUPPORTED_CPUID");
+        goto error;
+    }
+    
+    for (i = 0; i < 80; i++) {
+        printf("cpuid function 0x%x eax = 0x%x ebx = 0x%x ecx = 0x%x edx = 0x%x\n", cpuids->entries[i].function, cpuids->entries[i].eax, cpuids->entries[i].ebx, cpuids->entries[i].ecx, cpuids->entries[i].edx);
+
+        //if (cpuids->entries[i].function == 1 && cpuids->entries[i].edx & 0x200)
+          //  cpuids->entries[i].edx &= ~(1 << 9); //disable apic
+
+    }
+    
+    
+    msr_list = calloc(1, sizeof(struct kvm_msr_list));
+    
+    ret = DeviceIoControl(hGvmDev, GVM_GET_MSR_INDEX_LIST,
+        msr_list, sizeof(struct kvm_msr_list),
+        msr_list, sizeof(struct kvm_msr_list), &bytes,
+        (LPOVERLAPPED)NULL);
+    bytes = msr_list->nmsrs;
+    printf("number of msrs %d\n", msr_list->nmsrs);
+    free(msr_list);
+    msr_list = malloc(sizeof(struct kvm_msr_list) + sizeof(__u32) * bytes);
+    memset(msr_list, '\0', sizeof(struct kvm_msr_list) + sizeof(__u32) * bytes);
+    msr_list->nmsrs = bytes;
+    ret = DeviceIoControl(hGvmDev, GVM_GET_MSR_INDEX_LIST,
+        msr_list, sizeof(struct kvm_msr_list) + sizeof(__u32) * bytes,
+        msr_list, sizeof(struct kvm_msr_list) + sizeof(__u32) * bytes, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_GET_MSR_INDEX_LIST");
+        goto error;
+    }
+    
+    for (i = 0; i < msr_list->nmsrs; i++) {
+        printf("msr[%d] = 0x%x\n", i, msr_list->indices[i]);
+    }
     DeviceIoControl(hGvmVm, GVM_CREATE_VCPU, NULL, 0, &hGvmCpu, sizeof(hGvmCpu), &bytes, NULL);
     if (bytes != sizeof(ULONG64) || !hGvmCpu) {
         perror("Driver GVM DeviceIoControl GVM_CREATE_VCPU");
         goto error;
     }
+    
+    msrs = (struct kvm_msrs*)calloc(1, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msr_list->nmsrs);
+    msrs->nmsrs = 3;
+    msrs->entries[2].index = MSR_CORE_PERF_GLOBAL_CTRL;
+    msrs->entries[2].data = (1ULL << 32);
+    msrs->entries[1].index = MSR_CORE_PERF_FIXED_CTR_CTRL;
+    msrs->entries[1].data = 3 | (1 << 3) | (1 << 2); //
+    msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR0;
+    msrs->entries[0].data = (1ULL << 48) - TICK_PERIOD; // | (1 << 3);
+    ret = DeviceIoControl(hGvmCpu, GVM_SET_MSRS,
+        msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
+        msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_MSRS");
+        goto error;
+    }
+    
+    msrs->nmsrs = msr_list->nmsrs;
+    for (i = 0; i < msr_list->nmsrs; i++) {
+        msrs->entries[i].index = msr_list->indices[i];
+    }
+
+    ret = DeviceIoControl(hGvmCpu, GVM_GET_MSRS,
+        msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
+        msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_GET_MSRS");
+        goto error;
+    }
+    printf("GVM_GET_MSRS msrs %d\n", msrs->nmsrs);
+    for (i = 0; i < msrs->nmsrs; i++) {
+        printf("msrs[%d] 0x%x= 0x%llx\n", i, msrs->entries[i].index, msrs->entries[i].data);
+    }
+    
     memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
     kvm_userspace_mem.guest_phys_addr = 0;
     //kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xe0000);
@@ -170,7 +270,9 @@ int gvm_init(void* ram, size_t ram_size)
 
     pio_data = (void*)((size_t)kvm_run + PAGE_SIZE);
 
+    
     //GVM_CREATE_PIT_TIMER    
+    /*
     ret = DeviceIoControl(hGvmCpu, GVM_CREATE_PIT_TIMER,
         NULL, 0, NULL, 0, &bytes,
         (LPOVERLAPPED)NULL);
@@ -178,17 +280,39 @@ int gvm_init(void* ram, size_t ram_size)
         perror("Driver GVM DeviceIoControl GVM_CREATE_PIT_TIMER");
         goto error;
     }
-    
+    */
+    ret = DeviceIoControl(hGvmCpu, GVM_SET_CPUID,
+        cpuids, sizeof(struct kvm_cpuid_entry) * 80 + sizeof(struct kvm_cpuid),
+        cpuids, sizeof(struct kvm_cpuid_entry) * 80 + sizeof(struct kvm_cpuid),
+        &bytes, (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_CPUID");
+        goto error;
+    }
+    /*
+    struct kvm_vcpu_events event;
+    memset(&event, '\0', sizeof(event));
+    event.nmi.pending = 1;
+    event.flags = GVM_VCPUEVENT_VALID_NMI_PENDING;
+    ret = DeviceIoControl(hGvmCpu, GVM_SET_VCPU_EVENTS,
+        &event, sizeof(struct kvm_vcpu_events),
+        &event, sizeof(struct kvm_vcpu_events),
+        &bytes, (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_VCPU_EVENTS");
+        goto error;
+    }
+    */
     
     return 0;
 error:
-    if (hGvm)
-        CloseHandle(hGvm);
+    if (hGvmDev)
+        CloseHandle(hGvmDev);
     if (hGvmVm)
         CloseHandle(hGvmVm);
     if (hGvmCpu)
         CloseHandle(hGvmCpu);
-    return -1;
+    exit(-1);
 }
 
 void gvm_register_mmio(unsigned int address, size_t size)
@@ -426,7 +550,7 @@ NTSTATUS gvm_get_registers(struct Registers* Registers)
         NULL, 0, &kvm_regs, sizeof(kvm_regs), &bytes,
         (LPOVERLAPPED)NULL);
     if (!ret) {
-        perror("Driver GVM DeviceIoControl GVM_SET_REGS");
+        perror("Driver GVM DeviceIoControl GVM_GET_REGS");
         return ret;
     }
 
@@ -451,12 +575,12 @@ NTSTATUS gvm_get_registers(struct Registers* Registers)
 
     
 
-    memset(&kvm_sregs, '\0', sizeof(kvm_regs));
+    memset(&kvm_sregs, '\0', sizeof(kvm_sregs));
     ret = DeviceIoControl(hGvmCpu, GVM_GET_SREGS,
         NULL, 0, &kvm_sregs, sizeof(kvm_sregs), &bytes,
         (LPOVERLAPPED)NULL);
     if (!ret) {
-        perror("Driver GVM DeviceIoControl GVM_SET_REGS");
+        perror("Driver GVM DeviceIoControl GVM_GET_SREGS");
         return ret;
     }
 

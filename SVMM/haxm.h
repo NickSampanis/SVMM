@@ -70,7 +70,7 @@ struct segment_desc_t {
 typedef struct segment_desc_t segment_desc_t;
 
 /* fx_layout has 3 formats table 3-56, 512bytes */
-struct fx_layout {
+struct ALIGNED(16) fx_layout {
     uint16_t  fcw;
     uint16_t  fsw;
     uint8_t   ftw;
@@ -98,7 +98,7 @@ struct fx_layout {
     uint8_t   mmx_1[8][16];
     uint8_t   mmx_2[8][16];
     uint8_t   pad[96];
-} ALIGNED(16);
+};
 
 struct vcpu_state_t {
     union {
