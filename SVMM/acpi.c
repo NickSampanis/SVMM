@@ -74,14 +74,14 @@ static VOID AcpiPciConfWriteHandler(PCI* Pci, ULONG64 Address, ULONG Value, ULON
 			break;
 		case 0x43:
 			Pci->conf[Address + i] = (Value >> (i * 8)) & 0xff;
-			WritePciConfHandler(PCI_CONF_BAR0, Value, 4);
+			PciWriteConfHandler(PCI_CONF_BAR0, Value, 4);
 			return;
 		case 0x90:
 			Pci->conf[Address + i] = (Value & 0xf0) | 0x01;
 			break;
 		case 0x93:
 			Pci->conf[Address + i] = (Value >> (i * 8)) & 0xff;
-			WritePciConfHandler(PCI_CONF_BAR1, Value, 4);
+			PciWriteConfHandler(PCI_CONF_BAR1, Value, 4);
 			return;
 		default:
 			Pci->conf[Address + i] = (Value >> (i * 8)) & 0xff;
@@ -176,15 +176,15 @@ ULONG AcpiReadPortIoHandler(ULONG Address, ULONG Length)
 
 VOID AcpiInitialize()
 {
-	ULONG  devFunc, Address;
+	ULONG  devFunc, PciAddress;
 
 	memset(&Acpi, '\0', sizeof(Acpi));
 	devFunc = BX_PCI_DEVICE(3, 0);
-	Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
-	RegisterPciHandler(Address, AcpiPciConfWriteHandler, AcpiPciConfReadHandler);
-	InitPciConfig(Address, 0x8086, PCI_DEVICE_ID_INTEL_82371AB_3, 0x03, 0x068000, 0x00, PCI_INTA);
-	PciSetBarIo(Address, 0, 16, AcpiReadPortIoHandler, AcpiWritePortIoHandler, ACPI_PM_PORT_MASK);
-	PciSetBarIo(Address, 1, 64, AcpiReadPortIoHandler, AcpiWritePortIoHandler, ACPI_SM_PORT_MASK);
+	PciAddress = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
+	PciRegisterConfigHandler(PciAddress, AcpiPciConfWriteHandler, AcpiPciConfReadHandler);
+	PciInitConfig(PciAddress, 0x8086, PCI_DEVICE_ID_INTEL_82371AB_3, 0x03, 0x0680, 0x00, 0x00, PCI_INTA);
+	PciSetBarIo(PciAddress, 0, 0, 16, AcpiReadPortIoHandler, AcpiWritePortIoHandler, ACPI_PM_PORT_MASK);
+	PciSetBarIo(PciAddress, 1, 0, 64, AcpiReadPortIoHandler, AcpiWritePortIoHandler, ACPI_SM_PORT_MASK);
 	//RegisterPortIoHandler(ACPI_DBG_IO_ADDR, AcpiWritePortIoHandler, AcpiReadPortIoHandler);
 	PciDevices[0][devFunc].conf[0x06] = 0x80; // status_devsel_medium
 	PciDevices[0][devFunc].conf[0x07] = 0x02;
@@ -204,6 +204,5 @@ VOID AcpiInitialize()
 	PciDevices[0][devFunc].conf[0x92] = 0x00;
 	PciDevices[0][devFunc].conf[0x93] = 0x00;
 
-	//TimerId = TimerRegister(MSECONDS_TO_NS(10), AcpiTimerHandler, NULL);
 	TimerId = TimerRegister(TICK_PERIOD * 10, AcpiTimerHandler, NULL);
 }

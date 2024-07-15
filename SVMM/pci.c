@@ -97,12 +97,12 @@ VOID PciInitialize(VOID)
 	}
 }
 
-NTSTATUS RegisterPciHandler(ULONG Address, WritePciConfigHandlerCallback WriteHandler, ReadPciConfigHandlerCallback ReadHandler)
+NTSTATUS PciRegisterConfigHandler(ULONG PciAddress, WritePciConfigHandlerCallback WriteHandler, ReadPciConfigHandlerCallback ReadHandler)
 {
 	ULONG devFunc, bus;
 
-	bus = PCI_ADDRESS_TO_BUS(Address);
-	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
+	bus = PCI_ADDRESS_TO_BUS(PciAddress);
+	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(PciAddress);
 
 	if (devFunc >= MAX_PCI_DEVICES_PER_BUS || bus >= MAX_BUSES) {
 		fprintf(stderr, "Error in RegisterPciHandler, Address greater than available pci devices!\n");
@@ -121,7 +121,7 @@ NTSTATUS RegisterPciHandler(ULONG Address, WritePciConfigHandlerCallback WriteHa
 }
 
 
-VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length)
+VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 {
 	WritePortIoHandlerCallback PortIoWriteHandler;
 	ReadPortIoHandlerCallback PortIoReadHandler;
@@ -195,7 +195,7 @@ VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length)
 							RemovePortIoHandler(PciDevices[bus][devFunc].bar[barNum].addr + i);
 						PortIoWriteHandler = PciDevices[bus][devFunc].bar[barNum].WriteHandler;
 						PortIoReadHandler = PciDevices[bus][devFunc].bar[barNum].ReadHandler;
-						RegisterPortIoHandler(Value + i, PortIoWriteHandler, PortIoReadHandler);
+						RegisterPortIoHandler((Value & ~3) + i, PortIoWriteHandler, PortIoReadHandler);
 					}
 				}
 				else {
@@ -215,10 +215,10 @@ VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length)
 							RemoveMMIOHandler(PciDevices[bus][devFunc].bar[barNum].addr + i);
 						MMIOWriteHandler = PciDevices[bus][devFunc].bar[barNum].WriteHandler;
 						MMIOReadHandler = PciDevices[bus][devFunc].bar[barNum].ReadHandler;
-						RegisterMMIOHandler(Value + i, MMIOWriteHandler, MMIOReadHandler);
+						RegisterMMIOHandler((Value & ~3) + i, MMIOWriteHandler, MMIOReadHandler);
 					}
 				}
-				PciDevices[bus][devFunc].bar[barNum].addr = Value;
+				PciDevices[bus][devFunc].bar[barNum].addr = (Value & ~3);
 				
 			}
 		}
@@ -238,14 +238,14 @@ VOID WritePciConfHandler(ULONG Address, ULONG Value, ULONG Length)
 	}
 }
 
-ULONG ReadPciConfHandler(ULONG Address, ULONG Length)
+ULONG PciReadConfHandler(ULONG PciAddress, ULONG Length)
 {
 	UCHAR bus, devFunc, offset, barNum;
 	ULONG i, Value;
 
-	bus = PCI_ADDRESS_TO_BUS(Address);
-	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
-	offset = PCI_ADDRESS_TO_OFFSET(Address);
+	bus = PCI_ADDRESS_TO_BUS(PciAddress);
+	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(PciAddress);
+	offset = PCI_ADDRESS_TO_OFFSET(PciAddress);
 
 	if (devFunc >= MAX_PCI_DEVICES_PER_BUS || bus >= MAX_BUSES) {
 		fprintf(stderr, "Error in ReadPciConfHandler, Address greater than available pci devices!\n");
@@ -278,13 +278,13 @@ ULONG ReadPciConfHandler(ULONG Address, ULONG Length)
 	return Value;
 }
 
-VOID InitPciConfig(ULONG Address, USHORT Vendor, USHORT Device, BYTE Revision,
-	ULONG Class, BYTE Type, BYTE Interrupt)
+VOID PciInitConfig(ULONG PciAddress, USHORT Vendor, USHORT Device, BYTE Revision,
+	ULONG Class, BYTE ProgIf, BYTE Type, BYTE Interrupt)
 {
 	ULONG devFunc, bus;
 
-	bus = PCI_ADDRESS_TO_BUS(Address);
-	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
+	bus = PCI_ADDRESS_TO_BUS(PciAddress);
+	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(PciAddress);
 	if (devFunc >= MAX_PCI_DEVICES_PER_BUS || bus >= MAX_BUSES) {
 		fprintf(stderr, "Error in InitPciConfig, Address greater than available pci devices!\n");
 		exit(-1);
@@ -296,27 +296,29 @@ VOID InitPciConfig(ULONG Address, USHORT Vendor, USHORT Device, BYTE Revision,
 	}
 
 	//memset(PciDevices[bus][devFunc].conf, 0xff, sizeof(PciDevices[bus][devFunc].conf));
-	PciDevices[bus][devFunc].conf[0x00] = (BYTE)(Vendor & 0xff);
-	PciDevices[bus][devFunc].conf[0x01] = (BYTE)(Vendor >> 8);
-	PciDevices[bus][devFunc].conf[0x02] = (BYTE)(Device & 0xff);
-	PciDevices[bus][devFunc].conf[0x03] = (BYTE)(Device >> 8);
+	PciDevices[bus][devFunc].conf[PCI_CONF_VEND_1] = (BYTE)(Vendor & 0xff);
+	PciDevices[bus][devFunc].conf[PCI_CONF_VEND_2] = (BYTE)(Vendor >> 8);
+	PciDevices[bus][devFunc].conf[PCI_CONF_DEV_1] = (BYTE)(Device & 0xff);
+	PciDevices[bus][devFunc].conf[PCI_CONF_DEV_2] = (BYTE)(Device >> 8);
+
 	PciDevices[bus][devFunc].conf[0x08] = Revision;
-	PciDevices[bus][devFunc].conf[0x09] = (BYTE)(Class & 0xff);
-	PciDevices[bus][devFunc].conf[0x0a] = (BYTE)((Class >> 8) & 0xff);
-	PciDevices[bus][devFunc].conf[0x0b] = (BYTE)((Class >> 16) & 0xff);
-	PciDevices[bus][devFunc].conf[0x0e] = Type;
+	PciDevices[bus][devFunc].conf[PCI_CONF_PROGIF] = ProgIf;
+	PciDevices[bus][devFunc].conf[PCI_CONF_SUB_CLASS] = (BYTE)(Class & 0xff);
+	PciDevices[bus][devFunc].conf[PCI_CONF_CLASS] = (BYTE)((Class >> 8) & 0xff);
+	//PciDevices[bus][devFunc].conf[0x0b] = (BYTE)((Class >> 16) & 0xff);
+	PciDevices[bus][devFunc].conf[PCI_CONF_HDR_TYPE] = Type;
 	PciDevices[bus][devFunc].conf[PCI_CONF_IRQ_LINE] = Interrupt;
 	PciDevices[bus][devFunc].conf[PCI_CONF_IRQ_PIN] = 1;
 
 }
 
-void PciSetBarIo(ULONG Address, BYTE BarNumber, USHORT Size, ReadPortIoHandlerCallback ReadPortHandler,
+void PciSetBarIo(ULONG PciAddress, BYTE BarNumber, ULONG BarAddress, USHORT Size, ReadPortIoHandlerCallback ReadPortHandler,
 	WritePortIoHandlerCallback WritePortHandler, ULONG64 Mask)
 {
 	ULONG devFunc, bus;
 
-	bus = PCI_ADDRESS_TO_BUS(Address);
-	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
+	bus = PCI_ADDRESS_TO_BUS(PciAddress);
+	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(PciAddress);
 	if (devFunc >= MAX_PCI_DEVICES_PER_BUS || bus >= MAX_BUSES) {
 		fprintf(stderr, "Error in ReadPciConfHandler, Address greater than available pci devices!\n");
 		exit(-1);
@@ -327,18 +329,18 @@ void PciSetBarIo(ULONG Address, BYTE BarNumber, USHORT Size, ReadPortIoHandlerCa
 		PciDevices[bus][devFunc].bar[BarNumber].ReadHandler = ReadPortHandler;
 		PciDevices[bus][devFunc].bar[BarNumber].WriteHandler = WritePortHandler;
 		PciDevices[bus][devFunc].bar[BarNumber].mask = Mask;
-		PciDevices[bus][devFunc].bar[BarNumber].addr = 0;
-		PciDevices[bus][devFunc].conf[0x10 + BarNumber * 4] = 0x01;
+		PciDevices[bus][devFunc].bar[BarNumber].addr = BarAddress;
+		*(ULONG*)&PciDevices[bus][devFunc].conf[0x10 + BarNumber * 4] = BarAddress | 0x01;
 	}
 }
 
-void PciSetBarMmio(ULONG Address, BYTE BarNumber, DWORD Size, ReadMMIOHandlerCallback ReadMMIOHandler,
+void PciSetBarMmio(ULONG PciAddress, BYTE BarNumber, ULONG BarAddress, DWORD Size, ReadMMIOHandlerCallback ReadMMIOHandler,
 	WriteMMIOHandlerCallback WriteMMIOHandler)
 {
 	ULONG devFunc, bus;
 
-	bus = PCI_ADDRESS_TO_BUS(Address);
-	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
+	bus = PCI_ADDRESS_TO_BUS(PciAddress);
+	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(PciAddress);
 
 	if (devFunc >= MAX_PCI_DEVICES_PER_BUS || bus >= MAX_BUSES) {
 		fprintf(stderr, "Error in ReadPciConfHandler, Address greater than available pci devices!\n");
@@ -349,8 +351,8 @@ void PciSetBarMmio(ULONG Address, BYTE BarNumber, DWORD Size, ReadMMIOHandlerCal
 		PciDevices[bus][devFunc].bar[BarNumber].size = Size;
 		PciDevices[bus][devFunc].bar[BarNumber].ReadHandler = ReadMMIOHandler;
 		PciDevices[bus][devFunc].bar[BarNumber].WriteHandler = WriteMMIOHandler;
-		PciDevices[bus][devFunc].bar[BarNumber].addr = 0;
-		PciDevices[bus][devFunc].conf[0x10 + BarNumber * 4] = 0;
+		PciDevices[bus][devFunc].bar[BarNumber].addr = BarAddress;
+		*(ULONG*)&PciDevices[bus][devFunc].conf[0x10 + BarNumber * 4] = BarAddress | 0x02;
 	}
 }
 

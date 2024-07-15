@@ -4,20 +4,11 @@
 #include "timer.h"
 #include "gvm.h"
 
+
+
 static struct Pit Pit;
 
-#define mod_64(x, y) ((x) - (y) * div64_u64(x, y))
-
-void PitSetOut(struct Counter* Counter, CHAR Data)
-{
-	if (Counter->outPin != Data) {
-		Counter->outPin = Data;
-		if (Data)
-			PicRaiseIrq(0);
-		else
-			PicLowerIrq(0);
-	}
-}
+static BYTE PitChannelSound;
 
 void PitSetCountToBinary(struct Counter* Counter)
 {
@@ -75,84 +66,64 @@ VOID PitSetCount(struct Counter* Counter, DWORD Data)
 	PitSetCountToBinary(Counter);
 }
 
-VOID PitTimerHandler(VOID* Param)
+LONG64 PitGetNextTransitionTime(ULONG Channel, ULONG64 CurrentTime)
 {
-	ULONG Channel;
+	ULONG64 Result, HighResult, NextTime, base;
+	ULONG period2;
 
-	Channel = (ULONG)Param;
-	//Pit.counter[Channel].totalTicks -= Pit.counter[Channel].tickChunk;
-	//Pit.counter[Channel].totalTicks -= TICK_PERIOD;
-	if (Channel) {
-		Pit.counter[Channel].count = ~Pit.counter[Channel].count;
-		return Pit.counter[Channel].count;
-	}
-	Pit.counter[Channel].count -= TICK_PERIOD;
-	
-	switch (Pit.counter[Channel].mode) {
-		case 0:
-		case 1:
-		case 4:
-			if (Pit.counter[Channel].count <= 0) {
-				Pit.counter[Channel].outPin = 1;
-				Pit.counter[Channel].count = 0xffff;
-			}
-			break;
-		case 2:
-		case 3:
-			if (Pit.counter[Channel].count <= 0) {
-				Pit.counter[Channel].outPin = ~Pit.counter[Channel].outPin;
-				Pit.counter[Channel].count = Pit.counter[Channel].initCount;
-			}
-			break;
-		case 5:
-			break;
-	}
+	HighResult = 0;
+	Result = muldiv64(CurrentTime - Pit.counter[Channel].countLoadTime, PIT_FREQ, NANOSECONDS_PER_SECOND);
 
-	if (Pit.counter[Channel].outPin)
-		PicRaiseIrq(0);
-	else 
-		PicLowerIrq(0);
-
-	
-}
-
-static int PitGetOut(ULONG Channel)
-{
-	LONG64 elapsed, interval;
-	int out;
-
-	elapsed = TimerGetElapsed(Pit.counter[Channel].timerId);
-	if (elapsed)
-		interval = (PIT_TICKS_PER_SECOND / elapsed);
-	else
-		interval = 0;
 	switch (Pit.counter[Channel].mode) {
 		default:
 		case 0:
-			out = (interval >= Pit.counter[Channel].count);
-			break;
 		case 1:
-			out = (interval < Pit.counter[Channel].count);
+			if (Result < Pit.counter[Channel].count)
+				NextTime = Pit.counter[Channel].count;
+			else 
+				return -1;
+			
 			break;
 		case 2:
-			out = ((mod_64(interval, Pit.counter[Channel].count) == 0) && (interval != 0));
+			base = (Result / Pit.counter[Channel].count) * Pit.counter[Channel].count;
+			NextTime = base + Pit.counter[Channel].count;
 			break;
 		case 3:
-			out = (mod_64(interval, Pit.counter[Channel].count) < ((Pit.counter[Channel].count + 1) >> 1));
+			base = (Result / (ULONG64)Pit.counter[Channel].count) * (ULONG64)Pit.counter[Channel].count;
+			period2 = (Pit.counter[Channel].count + 1) >> 1;
+			if ((Result - base) < period2) 
+				NextTime = base + period2;
+			
+			else 
+				NextTime = base + Pit.counter[Channel].count;
+			
 			break;
 		case 4:
 		case 5:
-			out = (interval == Pit.counter[Channel].count);
+			if (Result < Pit.counter[Channel].count) 
+				NextTime = Pit.counter[Channel].count;
+			else 
+				return -1;
+			
 			break;
 	}
-
-	return out;
+	/* convert to timer units */
+	Result = muldiv64(NextTime, NANOSECONDS_PER_SECOND, PIT_FREQ);
+	NextTime = Pit.counter[Channel].countLoadTime + Result;
+	/* fix potential rounding problems */
+	/* XXX: better solution: use a clock at PIT_FREQ Hz */
+	if (NextTime <= CurrentTime) 
+		NextTime = CurrentTime;
+	
+	return NextTime + 1;
 }
+
+
 
 VOID PitLatchStatus(ULONG Channel)
 {
 	if (!Pit.counter[Channel].statusLatched) {
-		Pit.counter[Channel].statusLatch = ((PitGetOut(Channel) << 7) |
+		Pit.counter[Channel].statusLatch = ((PitGetOut(Channel, Pit.counter[Channel].countLoadTime) << 7) |
 			(Pit.counter[Channel].rwMode << 4) |
 			(Pit.counter[Channel].mode << 1) |
 			Pit.counter[Channel].bcdMode);
@@ -160,74 +131,176 @@ VOID PitLatchStatus(ULONG Channel)
 	}
 }
 
-VOID PitLatchCount(ULONG Channel)
+LONG PitGetCount(ULONG Channel)
 {
-	if (!Pit.counter[Channel].countLatched) {
-		Pit.counter[Channel].outlatch = Pit.counter[Channel].count;
-		Pit.counter[Channel].countLatched = Pit.counter[Channel].rwMode;
-	}
-}
+	ULONG64 Result;
+	int counter;
 
-
-VOID PitLoadCount(ULONG Channel, ULONG Value)
-{
-	ULONG timesPerSec;
-
-	if (!Value)
-		Pit.counter[Channel].initCount = Pit.counter[Channel].count = 0x10000;
-	else 
-		Pit.counter[Channel].initCount = Pit.counter[Channel].count = Value & 0xffff;
-
-	Pit.counter[Channel].countWritten = 1;
-	timesPerSec = (PIT_TICKS_PER_SECOND / Pit.counter[Channel].count);
-	if (timesPerSec > 0x10000)
-		timesPerSec = 0x10000;
-	//Pit.counter[Channel].tickChunk = (SECOND_TO_TICKS / timesPerSec) & (~0xff);
-	Pit.counter[Channel].totalTicks = Pit.counter[Channel].totalTicksInit = TICK_PERIOD * timesPerSec;
-	
-	
+	Result = muldiv64(TimerGetClockNs() - Pit.counter[Channel].countLoadTime, PIT_FREQ, NANOSECONDS_PER_SECOND);
 	switch (Pit.counter[Channel].mode) {
 		case 0:
 		case 1:
 		case 4:
-			Pit.counter[Channel].outPin = 0;
-			TimerActivate(Pit.counter[Channel].timerId, TICK_PERIOD, 1);
-			break;
-		case 2:
-		case 3:
-			TimerActivate(Pit.counter[Channel].timerId, TICK_PERIOD, 1);
-			break;
 		case 5:
-			TimerDeactivate(Pit.counter[Channel].timerId);
+			counter = (Pit.counter[Channel].count - Result) & 0xffff;
+			break;
+		case 3:
+			counter = Pit.counter[Channel].count - ((2 * Result) % Pit.counter[Channel].count);
+			break;
+		default:
+			counter = Pit.counter[Channel].count - (Result % Pit.counter[Channel].count);
 			break;
 	}
+	return counter;
+}
 
-	//if (Channel)
-		//return;
+VOID PitLatchCount(ULONG Channel)
+{
+	if (!Pit.counter[Channel].countLatched) {
+		Pit.counter[Channel].outlatch = PitGetCount(Channel);
+		Pit.counter[Channel].countLatched = Pit.counter[Channel].rwMode;
+	}
+}
+
+/* get pit output bit */
+LONG PitGetOut(ULONG Channel, ULONG64 CurrentTime)
+{
+	ULONG64 Result, HighResult;
+	LONG out;
+
+	HighResult = 0;
+	Result = muldiv64(CurrentTime - Pit.counter[Channel].countLoadTime, PIT_FREQ, NANOSECONDS_PER_SECOND);
+
+	switch (Pit.counter[Channel].mode) {
+		default:
+		case 0:
+			out = (Result >= Pit.counter[Channel].count);
+			break;
+		case 1:
+			out = (Result < Pit.counter[Channel].count);
+			break;
+		case 2:
+			if ((Result % Pit.counter[Channel].count) == 0 && Result != 0) 
+				out = 1;
+			
+			else 
+				out = 0;
+			
+			break;
+		case 3:
+			out = (Result % Pit.counter[Channel].count) < ((Pit.counter[Channel].count + 1) >> 1);
+			break;
+		case 4:
+		case 5:
+			out = (Result == Pit.counter[Channel].count);
+			break;
+	}
+	return out;
+}
+
+static void PitIrqTimerUpdate(ULONG Channel, ULONG64 CurrentTime, BYTE Timer)
+{
+	LONG64 expire_time;
+	int irq_level;
+
+
+	expire_time = PitGetNextTransitionTime(Channel, CurrentTime);
+	irq_level = PitGetOut(Channel, CurrentTime);
+
+	switch (Pit.counter[Channel].mode) {
+		case 2:
+		case 4:
+		case 5:
+			if (Timer) {
+				/* flip flop*/
+				PicLowerIrq(0);
+				PicRaiseIrq(0);
+			}
+			break;
+		default:
+			if (irq_level)
+				PicRaiseIrq(0);
+			else
+				PicLowerIrq(0);
+	}
+	
+	Pit.counter[Channel].nextTransitionTime = expire_time;
+	if (expire_time != -1)
+		TimerActivate(Pit.counter[Channel].timerId, expire_time, 0);
+	else
+		TimerDeactivate(Pit.counter[Channel].timerId);
 }
 
 
+VOID PitTimerHandler(VOID* Param)
+{
+	ULONG Channel;
+
+	Channel = (ULONG)Param;
+	
+	PitIrqTimerUpdate(Channel, Pit.counter[Channel].nextTransitionTime, 1);
+
+}
+
+VOID PitLoadCount(ULONG Channel, ULONG Value)
+{
+	if (!Value)
+		Pit.counter[Channel].count = 0x10000;
+	else 
+		Pit.counter[Channel].count = Value & 0xffff;
+
+	Pit.counter[Channel].countWritten = 1;
+	Pit.counter[Channel].countLoadTime = TimerGetClockNs();
+
+	PitIrqTimerUpdate(Channel, Pit.counter[Channel].countLoadTime, 0);
+
+}
+
+VOID PitSetGate(ULONG64 Channel, ULONG Value)
+{
+	switch (Pit.counter[Channel].mode)
+	{
+		default:
+		case 0:
+		case 4:
+			break;
+		case 1:
+		case 5:
+			if (Pit.counter[Channel].gate < Value)
+			{
+				Pit.counter[Channel].countLoadTime = TimerGetClockNs();
+				PitIrqTimerUpdate(Channel, Pit.counter[Channel].countLoadTime, 0);
+
+			}
+			break;
+		case 2:
+		case 3:
+			if (Pit.counter[Channel].gate < Value)
+			{
+				Pit.counter[Channel].countLoadTime = TimerGetClockNs();
+				PitIrqTimerUpdate(Channel, Pit.counter[Channel].countLoadTime, 0);
+
+			}
+			break;
+	}
+	Pit.counter[2].gate = Value;
+}
+
 ULONG PitReadHandler(ULONG Address, ULONG Length)
 {
-	BYTE Channel, RefreshClockDiv;
-	TIMER Timer;
-	DWORD Ret;
-	
-	if (Address == 0x61)
-		Channel = 2;
-	else
-		Channel = (Address - 0x40) & 2;
+	BYTE Channel;
+	ULONG Refresh, Out;
+	static ULONG64 ClockNs = 0;
 
-	/*
-	if (Pit.totalTicks == TimerGetTotalTicks())
-		Pit.counter[Channel].count--;
-	else {
-		Pit.totalTicks = TimerGetTotalTicks();
-		Pit.counter[Channel].count = (Pit.counter[Channel].count - Pit.counter[Channel].countChunk) & ~(Pit.counter[Channel].countChunk - 1);
+	Channel = (Address - 0x40) & 2;
+
+	if (Address == 0x61) {
+		Refresh = ((TimerGetClockNs() + ClockNs) / 15085) & 1;
+		Out = PitGetOut(2, TimerGetClockNs() + ClockNs);
+		ClockNs += 4000000;
+		return (Pit.counter[2].gate) | (Refresh << 4) | (Out << 5);
 	}
-	*/
-	if (Address == 0x61)
-		return Pit.counter[Channel].count;
+		
 	
 
 	if (Pit.counter[Channel].statusLatched) {
@@ -253,16 +326,15 @@ ULONG PitReadHandler(ULONG Address, ULONG Length)
 		switch (Pit.counter[Channel].readState) {
 			default:
 			case RW_STATE_LSB:
-				//PitGetCount(Channel)
-				return Pit.counter[Channel].count & 0xff;
+				return PitGetCount(Channel) & 0xff;
 			case RW_STATE_MSB:
-				return (Pit.counter[Channel].count >> 8) & 0xff;
+				return (PitGetCount(Channel) >> 8) & 0xff;
 			case RW_STATE_WORD0:
 				Pit.counter[Channel].readState = RW_STATE_MSB;
-				return Pit.counter[Channel].count & 0xff;
+				return PitGetCount(Channel) & 0xff;
 			case RW_STATE_WORD1:
 				Pit.counter[Channel].readState = RW_STATE_WORD0;
-				return (Pit.counter[Channel].count >> 8) & 0xff;
+				return (PitGetCount(Channel) >> 8) & 0xff;
 		}
 	}
 }
@@ -279,18 +351,6 @@ VOID PitWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 	else 
 		Channel = (BYTE)Address & 2;
 	
-	/*
-	if (Pit.counter[Channel].countWritten) {
-		if (Pit.totalTicks == TimerGetTotalTicks())
-			Pit.counter[Channel].count--;
-		else {
-			Pit.totalTicks = TimerGetTotalTicks();
-			Pit.counter[Channel].count = (Pit.counter[Channel].count - Pit.counter[Channel].countChunk) & ~(Pit.counter[Channel].countChunk - 1);
-		}
-		if (Pit.counter[Channel].count < 0)
-			Pit.counter[Channel].count = Pit.counter[Channel].initCount;
-	}
-	*/
 	switch (Address) {
 		case 0x40:
 		case 0x41:
@@ -346,7 +406,8 @@ VOID PitWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 			}
 			break;
 		case 0x61:
-			PitLoadCount(2, TICK_PERIOD);
+			PitChannelSound = (Value >> 1) & 1;
+			PitSetGate(2, Value & 1);
 			break;
 	}
 }
@@ -367,20 +428,16 @@ VOID PitInitialize()
 		Pit.counter[i].readState = RW_STATE_LSB;
 		Pit.counter[i].writeState = RW_STATE_LSB;
 		Pit.counter[i].gate = 1;
-		Pit.counter[i].outPin = 1;
 		Pit.counter[i].triggerGate = 0;
 		Pit.counter[i].mode = 4;
 		Pit.counter[i].count = 0;
-		Pit.counter[i].nullCount = 0;
 		Pit.counter[i].rwMode = 1;
 		Pit.counter[i].statusLatch = 0;
-		Pit.counter[i].nextChangeTime = 0;
-		Pit.counter[i].countChunk = 0;
-		//Pit.counter[i].timerId = TimerRegister(MSECONDS_TO_NS(1), PitTimerHandler, (VOID *)i);
-		Pit.counter[i].timerId = TimerRegister(TICK_PERIOD, PitTimerHandler, (VOID*)i);
-		if (i != 2)
-			TimerDeactivate(Pit.counter[i].timerId);
+		Pit.counter[i].nextTransitionTime = 0;
 	}
+	Pit.counter[0].timerId = TimerCreate(PitTimerHandler, (VOID *)0);
+	//Pit.counter[0].countLoadTime = TimerGetClockNs();
+	//Pit.counter[0].nextTransitionTime = PitGetNextTransitionTime(0, Pit.counter[0].countLoadTime);
 	Pit.totalTicks = TimerGetTotalTicks();
 
 }

@@ -105,6 +105,9 @@
     <ClCompile Include="acpi.c">
       <Filter>Source Files\vdevs</Filter>
     </ClCompile>
+    <ClCompile Include="vhd.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="haxm.h">
@@ -204,6 +207,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="exdi.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vhd.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

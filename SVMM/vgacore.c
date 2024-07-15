@@ -647,19 +647,23 @@ VOID _VgaCoreMMIOWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 
     switch (VgaCore.graphics_ctrl.memory_mapping) {
     case 1: // 0xA0000 .. 0xAFFFF
-        if ((Address < 0xA0000) || (Address > 0xAFFFF)) return;
+        if ((Address < 0xA0000) || (Address > 0xAFFFF)) 
+            return;
         offset = (DWORD)Address - 0xA0000;
         break;
     case 2: // 0xB0000 .. 0xB7FFF
-        if ((Address < 0xB0000) || (Address > 0xB7FFF)) return;
+        if ((Address < 0xB0000) || (Address > 0xB7FFF)) 
+            return;
         offset = (DWORD)Address - 0xB0000;
         break;
     case 3: // 0xB8000 .. 0xBFFFF
-        if ((Address < 0xB8000) || (Address > 0xBFFFF)) return;
+        if ((Address < 0xB8000) || (Address > 0xBFFFF)) 
+            return;
         offset = (DWORD)Address - 0xB8000;
         break;
     default: // 0xA0000 .. 0xBFFFF
-        if ((Address < 0xA0000) || (Address > 0xBFFFF)) return;
+        if ((Address < 0xA0000) || (Address > 0xBFFFF)) 
+            return;
         offset = (DWORD)Address - 0xA0000;
     }
 
@@ -1918,7 +1922,6 @@ VOID VgaCoreInitialize()
     //RegisterMMIOHandler(0x110000, VgaCoreMMIOWriteHandler2, VgaCoreMMIOReadHandler);
 
     //0x30d40 
-	//TimerRegister(MSECONDS_TO_NS(20), VgaCoreTimerHandler, NULL);
     TimerRegister(TICK_PERIOD, VgaCoreTimerHandler, NULL);
 
 	VgaCore.num_x_tiles = VgaCore.max_xres / X_TILESIZE +

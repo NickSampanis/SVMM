@@ -1,8 +1,14 @@
 #pragma once
 #include <Windows.h>
 
-#define APIC_DEFAULT_MMIO			  0xfee00000
+#define MSR_IA32_APICBASE		   0x1b
+#define APIC_DEFAULT_MMIO		   0xfee00000
 
+#define APIC_MSR_SW_EN			   (1UL << 11)
+#define APIC_MSR_BSP			   (1UL << 8)
+#define LAPIC_VERSION_VALUE		   0x10
+
+/* Register Offsets */
 #define LAPIC_ID                   0x020
 #define LAPIC_VERSION              0x030
 #define LAPIC_TPR                  0x080
@@ -52,23 +58,26 @@
 #define LAPIC_TIMER_DIVIDE_CFG     0x3E0
 #define LAPIC_SELF_IPI             0x3F0
 
-#define LAPIC_INTERRUPT_TYPE	   (7 << 8)
+/* Delivery Mode 3bits */
+#define DELIVERY_MODE_FIXED		   0
+#define DELIVERY_MODE_LOW_PRI	   (1UL << 8)
+#define DELIVERY_MODE_SMI		   (1UL << 9)
+#define DELIVERY_MODE_NMI		   (1UL << 10)
+#define DELIVERY_MODE_INIT		   (5UL << 8)
+#define DELIVERY_MODE_SIPI		   (6UL << 8)
+#define DELIVERY_MODE_EXT		   (7UL << 8)
+#define DELIVERY_MODE_MASK		   (7UL << 8)
 
-#define INTERRUPT_TYPE_FIXED		0
-#define INTERRUPT_TYPE_LOW_PRI	   (1 << 8)
-#define INTERRUPT_TYPE_SMI		   (1 << 9)
-#define INTERRUPT_TYPE_NMI		   (1 << 10)
-#define INTERRUPT_TYPE_INIT		   (5 << 8)
-#define INTERRUPT_TYPE_SIPI		   (6 << 8)
-#define INTERRUPT_TYPE_EXT		   (7 << 8)
+/* Destination Mode 1bit */
+#define DESTINATION_MODE_PHYSICAL	0
+#define DESTINATION_MODE_LOGICAL	(1UL << 11)
+#define LAPIC_DESTINATION_MODE_MASK	(1UL << 11)
 
-#define DESTINATION_TYPE_GROUP	   (1 << 9)
-#define DESTINATION_TYPE_LAPIC	   (0)
+#define LAPIC_DESTINATION			(0xffUL << 24)
+#define LAPIC_LVT_MASKED			(1UL << 16)
+#define LAPIC_RAISED				(1UL << 14)
 
-#define LAPIC_DESTINATION		(0xff << 24)
-#define LAPIC_MASKED			(1 << 16)
-#define LAPIC_RAISED			(1 << 14)
-#define LAPIC_DESTINATION_MODE	(1 << 11)
+#define LAPIC_TIMER_PERIODIC        (1UL << 17)
 
 #define APIC_ERR_ILLEGAL_ADDR    0x80
 #define APIC_ERR_RX_ILLEGAL_VEC  0x40
@@ -89,13 +98,34 @@
 #define LAPIC_DM_SIPI		(6 << 8)
 #define LAPIC_DM_EXTINT		(7 << 8)
 
-#define LAPIC_TRIGGER_MODE			(1 << 15)
+#define LAPIC_TRIGGER_MODE_MASK		(1 << 15)
 
-#define LAPIC_DSH					(3 << 18)
 #define LAPIC_DSH_APICID			(0 << 18)
 #define LAPIC_DSH_SELF   			(1 << 18)
 #define LAPIC_DSH_ALL			  	(1 << 19)
 #define LAPIC_DSH_ALL_NO_SELF    	(3 << 18)
+#define LAPIC_DSH_MASK				(3 << 18)
+
+
+/** ESR - Send checksum error for Pentium 6. */
+# define LAPIC_ESR_SEND_CHKSUM_ERROR_P6      (1UL << 0)
+/** ESR - Send accept error for Pentium 6. */
+# define LAPIC_ESR_RECV_CHKSUM_ERROR_P6      (1UL << 1)
+/** ESR - Send accept error for Pentium 6. */
+# define LAPIC_ESR_SEND_ACCEPT_ERROR_P6      (1UL << 2)
+/** ESR - Receive accept error for Pentium 6. */
+# define LAPIC_ESR_RECV_ACCEPT_ERROR_P6      (1UL << 3)
+
+/** ESR - Redirectable IPI. */
+#define LAPIC_ESR_REDIRECTABLE_IPI           (1UL << 4)
+/** ESR - Send accept error. */
+#define LAPIC_ESR_SEND_ILLEGAL_VECTOR        (1UL << 5)
+/** ESR - Send accept error. */
+#define LAPIC_ESR_RECV_ILLEGAL_VECTOR        (1UL << 6)
+/** ESR - Send accept error. */
+#define LAPIC_ESR_ILLEGAL_REG_ADDRESS        (1UL << 7)
+/** ESR - Valid write-only bits. */
+#define LAPIC_ESR_WO_VALID                   UINT32_C(0x0)
 
 enum {
 	APIC_LVT_TIMER = 0,
@@ -114,31 +144,34 @@ typedef struct _LAPIC {
 	DWORD ApicVersion;
 	DWORD TaskPriority;
 	DWORD EndOfInterrupt;
-	DWORD InterruptServiceRegister[8];
-	DWORD TriggerModeRegister[8];
-	DWORD InterruptRequestRegister[8];
-	DWORD InterruptEnableRegister[8];
+	USHORT InterruptServiceRegister[16];
+	USHORT TriggerModeRegister[16];
+	USHORT InterruptRequestRegister[16];
 	DWORD DestinationLogical;
 	DWORD DestinationFormat;
 	DWORD InterruptCommandRegisterLow;
 	DWORD InterruptCommandRegisterHigh;
 	DWORD LocalVectorTable[APIC_LVT_ENTRIES];
-	DWORD TimerDivideFactor;
+	DWORD TimerDivideConfigurationRegister;
+	DWORD TimerInitialCountRegister;
+	ULONG64 TimerInitialLoadTime;
+	ULONG64 TimerNextExpire;
 	DWORD ErrorStatus;
 	DWORD ShadowErrorStatus;
+	DWORD TimerId;
 	BYTE SpuriousVector;
 	BYTE SoftwareEnable;
 	BYTE FocusDisable;
-	DWORD InitialCount;
+	BYTE MsrEnable;
 } LAPIC, *PLAPIC;
 
 VOID ApicInitialize(VOID);
 BYTE ApicAcknowledgeInterrupt(VOID);
-LONG ApicDeliverInterrupt(BYTE Vector, BYTE InterruptType, BYTE LevelSensitive);
 
 /* APIC BUS API */
-LONG ApicBusDeliverInterrupt(BYTE Vector, DWORD Destination, DWORD DestinationType, DWORD InterruptType, DWORD Raised, DWORD LevelSensitive);
-LONG ApicBusBroadcastInterrupt(BYTE Vector, BYTE InterruptType, BYTE LevelSensitive, DWORD ExcludeCpus);
+LONG ApicBusDeliverInterrupt(BYTE Vector, DWORD Destination, DWORD DestinationMode, DWORD DeliveryMode, DWORD Raised, DWORD TriggerMode);
 
 VOID ApicMMIOWriteHandler(ULONG Address, BYTE* Data, ULONG Length);
 VOID ApicMMIOReadHandler(ULONG Address, BYTE* Data, ULONG Length);
+VOID ApicSetMsr(ULONG64 Value);
+

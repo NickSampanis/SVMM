@@ -168,8 +168,8 @@ VOID Piix3Initialize()
 	memset(&piix3, '\0', sizeof(piix3));
 	devFunc = BX_PCI_DEVICE(1, 0);
 	Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
-	RegisterPciHandler(Address, Piix3PciConfWriteHandler, Piix3fxPciConfReadHandler);
-	InitPciConfig(Address, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_0, 0x00, 0x060100, 0x80, 0);
+	PciRegisterConfigHandler(Address, Piix3PciConfWriteHandler, Piix3fxPciConfReadHandler);
+	PciInitConfig(Address, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_0, 0x00, 0x0601, 0x00, 0x80, 0);
 
 	RegisterPortIoHandler(0xb2, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);
 	RegisterPortIoHandler(0xb3, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);
@@ -177,7 +177,7 @@ VOID Piix3Initialize()
 	RegisterPortIoHandler(0x4d1, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);
 	RegisterPortIoHandler(0xcf9, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);
 
-	WritePciConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x4), 0x07, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x4), 0x07, 1);
 	for (i = 0; i < 4; i++)
-		WritePciConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x60 + i), 0x80, 1);
+		PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x60 + i), 0x80, 1);
 }

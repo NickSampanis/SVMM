@@ -5,122 +5,95 @@
 
 IOAPIC IoApic;
 
-static VOID IoApicService(VOID)
+
+static VOID IoApicSetIntr(BYTE IrqNumber)
 {
-	DWORD i,Dest;
-	BYTE Vector;
+	LONG Status;
 
-	for (i = 0; i < IOAPIC_NUM_PINS; i++) {
-		if (IoApic.Irr & (1 << i) && !(IoApic.IoRedirectTable[i].Low & IOAPIC_MASKED)) {
-			if ((IoApic.IoRedirectTable[i].Low & IOAPIC_DELIVERY_MODE) == IOAPIC_EXTERNAL_INT) {
-				Vector = PicIAC();
-			}
-			else {
-				Vector = IoApic.IoRedirectTable[i].Low & 0xff;
-			}
-			Dest = IoApic.IoRedirectTable[i].High >> 24;
-			ApicBusDeliverInterrupt(Vector, Dest, 
-				IoApic.IoRedirectTable[i].Low & IOAPIC_DESTINATION_MODE, //1 << 11 dest mode
-				IoApic.IoRedirectTable[i].Low & IOAPIC_DELIVERY_MODE,    //7 << 8 interrupt type 
-				IoApic.IoRedirectTable[i].Low & IOAPIC_RAISED, 
-				IoApic.IoRedirectTable[i].Low & IOAPIC_LEVEL_SENSITIVE);
+	if (IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_MASKED)
+		return;
 
-			if (IoApic.IoRedirectTable[i].Low & IOAPIC_LEVEL_SENSITIVE) {
-				IoApic.Irr &= ~(1 << i);
-			}
-		}
+	//Level can be set if IoApic.Irr is set, but NOT if IoApic.IoRedirectTable[IrqNumber].Low.IRR is set
+	if (IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE &&
+		IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_IRR)
+		return;
+
+	//Deliver intr to LAPIC
+	Status = ApicBusDeliverInterrupt(
+		IoApic.IoRedirectTable[IrqNumber].Low & 0xff,
+		IoApic.IoRedirectTable[IrqNumber].High >> 24,
+		IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_DESTINATION_MODE, //1 << 11 dest mode
+		IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_DELIVERY_MODE,    //7 << 8 interrupt type 
+		IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_RAISED,
+		IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE);
+	if (!Status) {
+		if (IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE)
+			IoApic.IoRedirectTable[IrqNumber].Low |= IOAPIC_IRR;
+		else
+			IoApic.Irr &= ~(1UL << IrqNumber);
+		IoApic.IoRedirectTable[IrqNumber].Low &= ~(IOAPIC_DELIVERY_STATUS);
+	}
+	else 
+		IoApic.IoRedirectTable[IrqNumber].Low |= (IOAPIC_DELIVERY_STATUS);
+
+}
+
+VOID IoApicService(VOID)
+{
+	BYTE pin;
+
+	for (pin = 0; pin < IOAPIC_NUM_PINS; pin++) {
+		if (IoApic.Irr & (1UL << pin)) 
+			IoApicSetIntr(pin);
 	}
 }
 
-
-
-VOID IoApicSetIrq(BYTE IrqNumber, BYTE Raise)
+VOID IoApicLowerIrq(BYTE IrqNumber)
 {
-	BYTE triggerMode;
+	if (!IrqNumber)
+		IrqNumber = 2;
 
+	if (IrqNumber >= IOAPIC_NUM_PINS)
+		return;
+	if (IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE)
+		IoApic.Irr &= ~(1UL << IrqNumber);
+}
+
+//sets RR bit in register
+VOID IoApicRaiseIrq(BYTE IrqNumber)
+{
 	if (!IrqNumber)
 		IrqNumber = 2;
 
 	if (IrqNumber >= IOAPIC_NUM_PINS)
 		return;
 
-	if (!Raise) {
-		IoApic.Irr &= ~(1 << IrqNumber);
-		return;
-	}
-
 	if (IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE) {
-		//LEVEL raise the interrupt only if wasn't raised and wasn't accepted already, then set IRR in table
-		if (IoApic.Irr & (1 << IrqNumber) || IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_IRR)
-			return;
-		IoApic.Irr |= (1 << IrqNumber);
-		ApicBusDeliverInterrupt(IrqNumber,
-			IoApic.IoRedirectTable[IrqNumber].High >> 24,
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_DESTINATION_MODE, //1 << 11 dest mode
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_DELIVERY_MODE,    //7 << 8 interrupt type 
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_RAISED,
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE);
-		IoApic.IoRedirectTable[IrqNumber].Low |= IOAPIC_IRR;
+		//Level (raise the interrupt, even if its already in irr)
+		IoApic.Irr |= (1UL << IrqNumber);
+		IoApicService();
 	}
 	else {
-		//EDGE (raise the interrupt, even if its already in irr)
-		IoApic.Irr |= (1 << IrqNumber);
-		ApicBusDeliverInterrupt(IrqNumber,
-			IoApic.IoRedirectTable[IrqNumber].High >> 24,
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_DESTINATION_MODE, //1 << 11 dest mode
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_DELIVERY_MODE,    //7 << 8 interrupt type 
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_RAISED,
-			IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE);
-
+		//Edge raise the interrupt ONLY if it's not raised already
+		if (IoApic.Irr & (1UL << IrqNumber))
+			return;
+		IoApic.Irr |= (1UL << IrqNumber);
+		IoApicService();
 	}
-
 }
 
-/*
 
-VOID IoApicSetIrq(BYTE IrqNumber, BYTE Raise)
+VOID IoApicReceiveEndOfInterrupt(BYTE Vector)
 {
-	if (!IrqNumber)
-		IrqNumber = 2;
+	BYTE pin;
 
-	if (IrqNumber < IOAPIC_NUM_PINS) {
-		if (Raise << IrqNumber != (IrqNumber & (1 << IrqNumber))) {
-			if (IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_LEVEL_SENSITIVE) {
-				if (Raise) {
-					//LEVEL raise the interrupt only if wasn't raised
-					IoApic.IntIn |= (1 << IrqNumber);
-					IoApic.Irr |= (1 << IrqNumber);
-					IoApicService();
-				}
-				else {
-					IoApic.IntIn &= ~(1 << IrqNumber);
-					IoApic.Irr &= ~(1 << IrqNumber);
-				}
-			}
-			else { 
-				if (Raise) {
-					//EDGE (raise the interrupt, even if its already in irr)
-					IoApic.IntIn |= (1 << IrqNumber);
-					if (!(IoApic.IoRedirectTable[IrqNumber].Low & IOAPIC_MASKED)) {
-						IoApic.Irr |= (1 << IrqNumber);
-						IoApicService();
-					}
-					else
-						IoApic.IntIn &= ~(1 << IrqNumber);
-				}
-			}
+	for (pin = 0; pin < IOAPIC_NUM_PINS; pin++) {
+		if (IoApic.IoRedirectTable[pin].Low & IOAPIC_LEVEL_SENSITIVE &&
+			(IoApic.IoRedirectTable[pin].Low & 0xff) == Vector) {
+			IoApic.IoRedirectTable[pin].Low &= (~IOAPIC_IRR);
 		}
 	}
 }
-*/
-VOID IoApicReceiveEndOfInterrupt(BYTE Vector)
-{
-
-}
-
-#define IOAPIC_SET_INDEX						0x00
-#define IOAPIC_SET_DATA                         0x10
-#define IOAPIC_SET_EOI                          0x40    /* Newer I/O APIC only. */
 
 
 static VOID _IoApicMMIOWriteHandler(ULONG Address, ULONG Value)
@@ -142,13 +115,16 @@ static VOID _IoApicMMIOWriteHandler(ULONG Address, ULONG Value)
 			case 2:
 				break;
 			default:
-				i = (IoApic.IoRegisterSelect - 0x10) >> 1;
+				i = (BYTE)(IoApic.IoRegisterSelect - 0x10) >> 1;
 				if (i >= IOAPIC_NUM_PINS)
 					return;
 				if (IoApic.IoRegisterSelect & 1)
 					IoApic.IoRedirectTable[i].High = Value;
-				else
+				else {
 					IoApic.IoRedirectTable[i].Low = Value;
+					if (!(IoApic.IoRedirectTable[i].Low & IOAPIC_LEVEL_SENSITIVE)) 
+						IoApic.IoRedirectTable[i].Low &= ~IOAPIC_IRR;
+				}
 				IoApicService();
 				break;
 			}
@@ -197,7 +173,7 @@ static ULONG _IoApicMMIOReadHandler(ULONG Address)
 		case 2:
 			return 0;
 		default:
-			i = (IoApic.IoRegisterSelect - 0x10) >> 1;
+			i = (BYTE)(IoApic.IoRegisterSelect - 0x10) >> 1;
 			if (i >= IOAPIC_NUM_PINS)
 				return 0;
 			if (IoApic.IoRegisterSelect & 1)
@@ -239,11 +215,11 @@ VOID IoApicInitialize(VOID)
 
 	memset(&IoApic, '\0', sizeof(IoApic));
 	IoApic.IoApicId = 1;
-	IoApic.IoApicVersion = ((IOAPIC_NUM_PINS - 1) << 16) | 0x11;
+	IoApic.IoApicVersion = ((IOAPIC_NUM_PINS - 1) << 16) | IOAPIC_VERSION_82093AA;
 	RegisterMMIOHandler(IOAPIC_DEFAULT_MMIO, IoApicMMIOWriteHandler, IoApicMMIOReadHandler);
 
 	for (i = 0; i < IOAPIC_NUM_PINS; i++) {
-		IoApic.IoRedirectTable[i].Low = 0x00010000;
+		IoApic.IoRedirectTable[i].Low = IOAPIC_MASKED;
 		IoApic.IoRedirectTable[i].High = 0;
 	}
 }

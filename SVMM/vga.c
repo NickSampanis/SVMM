@@ -517,8 +517,8 @@ VOID VgaInitialize()
     }
     devFunc = BX_PCI_DEVICE(2, 0);
     Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
-    RegisterPciHandler(Address, VgaWritePciConfHandler, VgaReadPciConfHandler);
-    InitPciConfig(Address, PCI_VENDOR_ID_TEST, 0x1111, 0x00, 0x030000, 0x00, 0);
+    PciRegisterConfigHandler(Address, VgaWritePciConfHandler, VgaReadPciConfHandler);
+    PciInitConfig(Address, PCI_VENDOR_ID_TEST, 0x1111, 0x00, 0x0300, 0x00, 0x00, 0);
     
     for (Address = 0x1CE; Address <= 0x1CF; Address++) {
         RegisterPortIoHandler(Address, (WritePortIoHandlerCallback)VgaVbePortIoWriteHandler, (ReadPortIoHandlerCallback)VgaVbePortIoReadHandler);

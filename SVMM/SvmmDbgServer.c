@@ -136,7 +136,7 @@ VOID SvmmDbgRecvAck()
     }
 
 }
-
+/*
 VOID SvmmDbgSendAck()
 {
     DBG_PACKET_HEADER pktHdr;
@@ -153,7 +153,7 @@ VOID SvmmDbgSendAck()
     }
 
 }
-
+*/
 VOID SvmmDbgRecv(USHORT Type, BYTE* Buffer, SIZE_T Size)
 {
     PDBG_PACKET_HEADER pktHdr;
@@ -229,7 +229,7 @@ BYTE SvmmDbgLoop()
     PDBG_PACKET_WRITE_REQUEST pktWriteReq;
     PDBG_PACKET_INIT_REQUEST pktInitReq;
     PDBG_PACKET_PRINT_REQUEST pktPrintReq;
-    DBG_PACKET_ACK_REQUEST pktAckRep;
+    DBG_PACKET_INIT_REPLY pktInitRep;
     struct kvm_msrs* msrs;
 
     while (1) {
@@ -284,7 +284,12 @@ BYTE SvmmDbgLoop()
                 SvmmDbgSend(DBG_TYPE_READ_REGISTERS, (BYTE *)&Registers, sizeof(struct Registers));
                 break;
             case DBG_TYPE_WRITE_REGISTERS:
-                SvmmDbgRecv(DBG_TYPE_WRITE_REGISTERS, (BYTE*)&Registers, sizeof(struct Registers));
+                //SvmmDbgRecv(DBG_TYPE_WRITE_REGISTERS, (BYTE*)&Registers, sizeof(struct Registers));
+                if (pktHdr->Size != sizeof(Registers)) {
+                    fprintf(stderr, "pktHdr->Size != sizeof(Registers)\n");
+                    exit(-1);
+                }
+                memcpy(&Registers, pktHdr->Data, sizeof(Registers));
                 SvmmSetRegisters(&Registers);
                 if (Registers.context._dr7 & (DR1_ENABLED | DR2_ENABLED | DR3_ENABLED | DR4_ENABLED)) {
                     memset(&kvm_debug, '\0', sizeof(kvm_debug));
@@ -338,7 +343,7 @@ BYTE SvmmDbgLoop()
                 }
 
                 break;
-            case DBG_TYPE_INIT:
+            case DBG_TYPE_INIT_REQ:
                 if (pktHdr->Size != sizeof(DBG_PACKET_INIT_REQUEST)) {
                     fprintf(stderr, "pktHdr->Size != sizeof(DBG_PACKET_INIT_REQUEST)\n");
                     exit(-1);
@@ -348,10 +353,10 @@ BYTE SvmmDbgLoop()
                     fprintf(stderr, "pktInitReq->Id != 1\n");
                     exit(-1);
                 }
-                memset(&pktAckRep, '\0', sizeof(pktAckRep));
-                pktAckRep.MemorySize = RamSize;
-                pktAckRep.Id = SvmmPacketId;
-                SvmmDbgSend(DBG_TYPE_ACK, &pktAckRep, sizeof(DBG_PACKET_ACK_REQUEST));
+                memset(&pktInitRep, '\0', sizeof(pktInitRep));
+                pktInitRep.MemorySize = RamSize;
+                pktInitRep.Id = SvmmPacketId;
+                SvmmDbgSend(DBG_TYPE_INIT_REP, &pktInitRep, sizeof(DBG_PACKET_INIT_REPLY));
                 printf("init!\n");
                 break;
             case DBG_TYPE_STEP_INTO:
@@ -398,6 +403,10 @@ BYTE SvmmDbgLoop()
                     (LPOVERLAPPED)NULL);
                 SvmmDbgSend(DBG_TYPE_READ_REGISTERS, (BYTE *)msrs,
                     sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs);
+
+                break;
+            case DBG_TYPE_STATE_CHANGE_REQ:
+                SvmmDbgSend(DBG_TYPE_STATE_CHANGE_REP, (BYTE*)NULL, 0);
 
                 break;
 

@@ -98,7 +98,9 @@ LONG64 SvmmGetRip()
 	Mode = SvmmGetCpuMode();
 
 	if (Mode == CPU_MODE_REAL)
-		return Registers.context._rip | (ULONG64)Registers.context._cs.selector << 4;
+		return Registers.context._rip + ((ULONG64)Registers.context._cs.selector << 4);
+	else if (Mode == CPU_MODE_PROTECTED)
+		return Registers.context._rip + ((ULONG64)Registers.context._cs.base);
 	else
 		return Registers.context._rip;
 }
@@ -180,7 +182,6 @@ ULONG64 SvmmGetGpaFromGva(ULONG64 GuestVirtualAddress)
 /* Returns Host Virtual address for any given gpa or gva */
 BYTE* SvmmGetHostAddress(ULONG64 GuestAddress)
 {
-	BYTE *hostAddress;
 	ULONG64 gpaAddress;
 
 	gpaAddress = GuestAddress;
@@ -414,7 +415,29 @@ void SvmmPrintRegisters(struct Registers* Registers)
 	printf("\n");
 
 }
+double PcFreq;
 
+double StartCounter()
+{
+	double res;
+	LARGE_INTEGER freq, counter;
+
+	QueryPerformanceFrequency(&freq);
+	PcFreq = ((double)freq.QuadPart) / 1000.0;
+
+	QueryPerformanceCounter(&counter);
+	
+	return counter.QuadPart;
+}
+
+double GetCounter(ULONG64 StartCounter)
+{
+	LARGE_INTEGER counter;
+
+	QueryPerformanceCounter(&counter);
+	
+	return ((double)counter.QuadPart - (double)StartCounter) / PcFreq;
+}
 
 //Table 14-1. Initial Processor State BX_CPU_C::reset
 VOID SvmmInitializeRegisterState(struct Registers* Registers)
@@ -535,11 +558,14 @@ VOID SvmmInterrupt(DWORD Vector)
 int main(int argc, char *argv[])
 {
 	NTSTATUS Status;
+	ULONG64 tsc, counter;
 	DWORD Bytes, i, vector, bytes;
 	BOOL Ret;
 	BYTE Buffer[2048], dbgState;
-	struct kvm_guest_debug kvm_debug;
 
+	
+	counter = 0;
+	tsc = 0;
 	RamSize = 1024 * MB;
 	Ram = VirtualAlloc(NULL, RamSize + ROM_SIZE + PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (!Ram) {
@@ -581,12 +607,13 @@ int main(int argc, char *argv[])
 	ApicInitialize();
 	AcpiInitialize();
 	CmosSetupMemory(RamSize);
-	CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_CD | (CMOS_BOOT_HD << 4));
+	//CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_CD | (CMOS_BOOT_HD << 4));
+	CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_HD);
 	CmosSetRegister(CMOS_FAST_BOOT, 1);
 
 	//Load Bios At The End Of Ram
-	Status = SvmmLoadRom("bios.bin", TYPE_SYSTEM_BIOS);
-	//Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);
+	//Status = SvmmLoadRom("bios.bin", TYPE_SYSTEM_BIOS);
+	Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);
 	/*
 	Status = SvmmLoadRom("OVMF.fd", TYPE_SYSTEM_BIOS);
 	if (Status < 0) {
@@ -907,6 +934,27 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 #endif
 			
+			printf("GVM_EXIT_INTR\n");
+			printf("rip = 0x%llx\n", Registers.context._rip);
+			/*
+			BOOL ret;
+
+			msrs = (struct kvm_msrs*)calloc(1, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * 2);
+			msrs->nmsrs = 2;
+			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR_CTRL;
+			msrs->entries[1].index = MSR_CORE_PERF_FIXED_CTR0;
+			ret = DeviceIoControl(hGvmCpu, GVM_GET_MSRS,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
+				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
+				(LPOVERLAPPED)NULL);
+			if (!ret) {
+				perror("Driver GVM DeviceIoControl GVM_EXIT_WATCHDOG GVM_GET_MSRS");
+				exit(-1);
+			}
+			//printf("msr[0x%x] = 0x%llx\n", msrs->entries[0].index, msrs->entries[0].data);
+			//printf("msr[0x%x] = 0x%llx\n", msrs->entries[1].index, msrs->entries[1].data);
+
+			//scanf_s("%d", &Bytes);
 			msrs->nmsrs = 1;
 			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR0;
 			msrs->entries[0].data = (1ULL << 48) - TICK_PERIOD; // | (1 << 3);
@@ -915,7 +963,8 @@ int main(int argc, char *argv[])
 				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
 				(LPOVERLAPPED)NULL);
 			TimerTick(TICK_PERIOD);
-			
+			free(msrs);
+			*/
 			break;
 		case GVM_EXIT_UNKNOWN:
 			printf("GVM_EXIT_UNKNOWN\n");
@@ -984,7 +1033,7 @@ int main(int argc, char *argv[])
 				}
 			}
 			*/
-			TimerTick(MSECONDS_TO_NS(1));
+			//TimerTick(MSECONDS_TO_NS(1));
 			
 			//SvmmSetRegisters(&Registers);
 			//scanf_s("%d", &Bytes);
@@ -995,15 +1044,25 @@ int main(int argc, char *argv[])
 			break;
 		case GVM_EXIT_IRQ_WINDOW_OPEN:
 			//printf("GVM_EXIT_IRQ_WINDOW_OPEN\n");
-			//kvm_run->request_interrupt_window = 0;
-			printf("irq Open\n");
-			exit(-1);
+			//scanf_s("%d", &Bytes);
+			kvm_run->request_interrupt_window = 0;
+			//printf("irq Open\n");
 			if (svmm_events & EVENT_PENDING_INTR)
 				vector = PicIAC();
 			else if (svmm_events & EVENT_PENDING_LAPIC_INTR)
 				vector = ApicAcknowledgeInterrupt();
 			else
 				continue;
+			printf("current rip = 0x%llx\n", Registers.context._rip);
+			printf("vector = 0x%x\n", vector);
+			if (SvmmGetCpuMode() == CPU_MODE_LONG_MODE) {
+				ULONG64* tmp, tmp2;
+				tmp = SvmmGetHostAddress(Registers.context._idt.base + vector * 16);
+				tmp2 = (*tmp & 0xffff) | ((*tmp >> 32) & 0xffff0000);
+				tmp++;
+				tmp2 |= (*tmp << 32);
+				printf("irq handler 0x%llx\n", tmp2);
+			}
 			SvmmInterrupt(vector);
 			//scanf_s("%d", &Bytes);
 			break;
@@ -1013,17 +1072,18 @@ int main(int argc, char *argv[])
 			break;
 		case GVM_EXIT_EXCEPTION:
 			printf("GVM_EXIT_EXCEPTION\n");
-			scanf_s("%d", &Bytes);
+			printf("rip = 0x%llx\n", Registers.context._rip);
+
+			//scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_HYPERCALL:
 			printf("GVM_EXIT_HYPERCALL\n");
 			scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_DEBUG:
-			printf("GVM_EXIT_DEBUG\n");
-			printf("rip = 0x%llx\n", SvmmGetRip());
-			BOOL ret;
-
+			//printf("GVM_EXIT_DEBUG\n");
+			//printf("rip = 0x%llx\n", SvmmGetRip());
+			/*
 			msrs = (struct kvm_msrs*)calloc(1, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * 2);
 			msrs->nmsrs = 2;
 			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR_CTRL;
@@ -1051,19 +1111,8 @@ int main(int argc, char *argv[])
 			}
 			
 			free(msrs);
-			
-			//scanf_s("%d", &Bytes);
-			/*
-			KdSendSingleStep();
-			Stepping = 1;
-			do {
-				do {
-					memset(Buffer, '\0', sizeof(Buffer));
-					Status = recvfrom(windbg_sock, (char*)Buffer, sizeof(Buffer), 0, NULL, NULL);
-				} while (Stepping && (!Status || Status == -1));
-				Status = KdParsePacket((PKD_PACKET)Buffer);
-			} while (Status != DbgKdContinueApi2);
 			*/
+			
 			if (argv[1]) {
 				if (*SvmmGetHostAddress(SvmmGetRip()) == 0xcc || 
 					Registers.context._rip == Registers.context._dr0 || 
@@ -1071,7 +1120,8 @@ int main(int argc, char *argv[])
 					Registers.context._rip == Registers.context._dr2 || 
 					Registers.context._rip == Registers.context._dr3 ||
 					dbgState == DBG_TYPE_RUN || dbgState == DBG_TYPE_STEP_OVER) {
-					SvmmDbgSend(DBG_TYPE_ON_BREAK, (BYTE*)NULL, 0);
+					//printf("you should break!?\n");
+					//SvmmDbgSend(DBG_TYPE_ON_BREAK, (BYTE*)NULL, 0);
 					dbgState = SvmmDbgLoop();
 				}
 				else if (dbgState == DBG_TYPE_STEP_INTO) {
@@ -1089,9 +1139,9 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_SET_TPR:
-			//printf("GVM_EXIT_SET_TPR\n");
-			ApicMMIOWriteHandler(LAPIC_TPR, &kvm_run->cr8, 4);
-			//printf("rip = 0x%llx\n", Registers.context._rip);
+			printf("GVM_EXIT_SET_TPR\n");
+			ApicMMIOWriteHandler(APIC_DEFAULT_MMIO + LAPIC_TPR, &kvm_run->cr8, 4);
+			printf("rip = 0x%llx\n", Registers.context._rip);
 
 			//scanf_s("%d", &Bytes);
 			break;
@@ -1114,6 +1164,24 @@ int main(int argc, char *argv[])
 			printf("rip = 0x%llx\n", Registers.context._rip);
 			//printf("rax = 0x%llx\n", Registers.context._rax);
 			//printf("rcx = 0x%llx\n", Registers.context._rcx);
+			break;
+		case GVM_EXIT_VMX_TIMER:
+			/*
+			printf("GVM_EXIT_VMX_TIMER\n");
+			
+			if (!counter)
+				counter = StartCounter();
+			
+			printf("counter = %f\n", GetCounter(counter));
+			counter = StartCounter();
+			*/
+			TimerTick(TICK_PERIOD);
+			break;
+		case GVM_EXIT_MSR:
+			printf("GVM_EXIT_MSR\n");
+			printf("%s msr[0x%llx] = 0x%llx\n", kvm_run->msr.is_write ? "write" : "read", 
+				kvm_run->msr.msr_index, kvm_run->msr.data);
+			ApicSetMsr(kvm_run->msr.data);			
 			break;
 		default:
 			printf("default\n");

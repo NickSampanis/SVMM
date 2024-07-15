@@ -126,6 +126,7 @@ typedef struct _PS2 {
 	BYTE ControllerQueueIndex;		
 	BYTE ControllerQueue[KBD_CONTROLLER_QSIZE];
 	DWORD TimerPending;
+	DWORD TimerId;
 	BYTE KeyboardBuffer;
 	BYTE MouseBuffer;
 	BYTE CommandBuffer;

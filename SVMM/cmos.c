@@ -162,7 +162,7 @@ VOID CmosOneSecondTimer()
     Cmos.Registers[REG_STAT_A] |= 0x80; // set UIP bit
 
     // UIP timer for updating clock & alarm functions
-    TimerActivate(UipTimerIndex, TICK_PERIOD, 1);
+    TimerActivate(UipTimerIndex, TICK_PERIOD, 0);
 }
 
 void CmosUipTimer()
@@ -176,6 +176,7 @@ void CmosUipTimer()
     // update status register C
     if (Cmos.Registers[REG_STAT_B] & 0x10) {
         Cmos.Registers[REG_STAT_C] |= 0x90; // Interrupt Request, Update Ended
+        //Cmos.Registers[REG_STAT_C] = 0x41;
         if (Cmos.irq_enabled) {
             PicRaiseIrq(8);
         }
@@ -211,42 +212,7 @@ void CmosUipTimer()
 }
 
 
-VOID CmosInitialize()
-{
-    char* tmptime;
-	DWORD i;
 
-	memset(&Cmos, '\0', sizeof(Cmos));
-	for (i = 0x70; i <= 0x71; i++)
-		RegisterPortIoHandler(i, (WritePortIoHandlerCallback)CmosPortIoWriteHandler, (ReadPortIoHandlerCallback)CmosPortIoReadHandler);
-
-    OneSecondTimerIndex = TimerRegister(SECOND_TO_TICKS, CmosOneSecondTimer, NULL);
-    PeriodicTimerIndex = TimerRegister(SECOND_TO_TICKS, CmosPeriodicTimer, NULL);
-    UipTimerIndex = TimerRegister(TICK_PERIOD, CmosUipTimer, NULL);
-    TimerDeactivate(UipTimerIndex);
-
-    // CMOS values generated
-    Cmos.Registers[REG_STAT_A] = 0x26;
-    Cmos.Registers[REG_STAT_B] = 0x02;
-    Cmos.Registers[REG_STAT_C] = 0x00;
-    Cmos.Registers[REG_STAT_D] = 0x80;
-    Cmos.Registers[REG_EQUIPMENT_BYTE] |= 0x02;
-
-    Cmos.rtc_mode_12hour = 0;
-    Cmos.rtc_mode_binary = 0;
-    Cmos.timeval = time(NULL);
-
-    CmosUpdateClock();
-    Cmos.irq_enabled = 1;
-
-    while ((tmptime = _strdup(ctime(&(Cmos.timeval)))) == NULL) {
-        exit(-1);
-    }
-    tmptime[strlen(tmptime) - 1] = '\0';
-    free(tmptime);
-
-    
-}
 
 VOID CmosSetupMemory(SIZE_T MemorySize)
 {
@@ -337,7 +303,7 @@ VOID CraChange()
         Cmos.PeriodicIntervalUsec *= TICK_PERIOD;
         // if Periodic Interrupt Enable bit set, activate timer
         if (Cmos.Registers[REG_STAT_B] & 0x40)
-            TimerActivate(PeriodicTimerIndex, Cmos.PeriodicIntervalUsec, 1);
+            TimerActivate(PeriodicTimerIndex, Cmos.PeriodicIntervalUsec, 0);
 
         else
             TimerDeactivate(PeriodicTimerIndex);
@@ -420,7 +386,7 @@ VOID CmosPortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
                         // transition from 0 to 1
                         // if rate select is not 0, activate timer
                         if ((Cmos.Registers[REG_STAT_A] & 0x0f) != 0) {
-                            TimerActivate(PeriodicTimerIndex, Cmos.PeriodicIntervalUsec, 1);
+                            TimerActivate(PeriodicTimerIndex, Cmos.PeriodicIntervalUsec, 0);
                         }
                     }
                 }
@@ -458,4 +424,40 @@ VOID CmosCheckSum(VOID)
 
     Cmos.Registers[REG_CSUM_HIGH] = (sum >> 8) & 0xff; /* checksum high */
     Cmos.Registers[REG_CSUM_LOW] = (sum & 0xff);      /* checksum low */
+}
+
+VOID CmosInitialize()
+{
+    char* tmptime;
+    DWORD i;
+
+    memset(&Cmos, '\0', sizeof(Cmos));
+    for (i = 0x70; i <= 0x71; i++)
+        RegisterPortIoHandler(i, (WritePortIoHandlerCallback)CmosPortIoWriteHandler, (ReadPortIoHandlerCallback)CmosPortIoReadHandler);
+
+    //OneSecondTimerIndex = TimerRegister(TICK_PERIOD * 60, CmosOneSecondTimer, NULL);
+    //PeriodicTimerIndex = TimerRegister(TICK_PERIOD * 60, CmosPeriodicTimer, NULL);
+    UipTimerIndex = TimerRegister(TICK_PERIOD, CmosUipTimer, NULL);
+    TimerDeactivate(UipTimerIndex);
+
+    // CMOS values generated
+    Cmos.Registers[REG_STAT_A] = 0x26;
+    Cmos.Registers[REG_STAT_B] = 0x02;
+    Cmos.Registers[REG_STAT_C] = 0x00;
+    Cmos.Registers[REG_STAT_D] = 0x80;
+    Cmos.Registers[REG_EQUIPMENT_BYTE] |= 0x02;
+
+    Cmos.rtc_mode_12hour = 0;
+    Cmos.rtc_mode_binary = 0;
+    Cmos.timeval = time(NULL);
+
+    CmosUpdateClock();
+    Cmos.irq_enabled = 1;
+
+    while ((tmptime = _strdup(ctime(&(Cmos.timeval)))) == NULL) {
+        exit(-1);
+    }
+    tmptime[strlen(tmptime) - 1] = '\0';
+    free(tmptime);
+
 }

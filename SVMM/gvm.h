@@ -85,6 +85,8 @@ struct kvm_irqchip {
 #define GVM_EXIT_SYSTEM_EVENT     24
 #define GVM_EXIT_IOAPIC_EOI       26
 #define GVM_EXIT_MTF		      27
+#define GVM_EXIT_VMX_TIMER		  28
+#define GVM_EXIT_MSR			  29
 
 /* flags */
 #define RT_BIT_32(bit)     (1 << bit)
@@ -197,6 +199,12 @@ struct kvm_run {
 		struct {
 			__u8 vector;
 		} eoi;
+		/* GVM_EXIT_MSR */
+		struct {
+			__u64  msr_index;
+			__u64  data;
+			__u8   is_write;
+		} msr;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
@@ -562,6 +570,8 @@ struct kvm_msi {
 
 #define MSR_CORE_PERF_FIXED_CTR_CTRL 0x0000038d
 #define MSR_CORE_PERF_GLOBAL_CTRL 0x0000038f
+#define MSR_CORE_PERF_GLOBAL_OVF_CTRL	0x00000390
+
 #define MSR_APIC_BASE 0x800
 
 NTSTATUS gvm_get_registers(struct Registers* Registers);

@@ -5,7 +5,8 @@
 #include "cmos.h"
 #include "timer.h"
 #include "cdrom.h"
-#include "sparse.h"
+//#include "sparse.h"
+#include "vhd.h"
 #include <stdio.h>
 
 ATA_CHANNEL AtaChannel[4];
@@ -235,7 +236,7 @@ ULONG64 HardDiskCalculateLogicalAddress(BYTE Channel)
 			+ ((ULONG64)AtaChannel[Channel].Drive[Dnum].Controller.SectorNumber - 1);
 	}
 
-	if (SpareGetHardDiskSize() / 512 <= LogicalSector)
+	if (VhdGetHardDiskSize() / 512 <= LogicalSector)
 		return -1;
 	return LogicalSector;
 }
@@ -335,14 +336,17 @@ ULONG64 HardDiskWriteSector(BYTE Channel, BYTE* Buffer, DWORD BufferSize)
 			HardDiskCommandAborted(Channel);
 			return 0;
 		}
-		ret = SparseSeek(LogicalSector * HARDDISK_SECTOR_SIZE);
+		//ret = SparseSeek(LogicalSector * HARDDISK_SECTOR_SIZE);
+		ret = VhdSeek(LogicalSector * HARDDISK_SECTOR_SIZE);
+
 		/*
 		if (!ret) {
 			HardDiskCommandAborted(Channel);
 			return 0;
 		}
 		*/
-		ret = SparseWrite(AtaChannel[Channel].Drive[Dnum].Controller.Buffer, HARDDISK_SECTOR_SIZE);
+		ret = VhdWrite(AtaChannel[Channel].Drive[Dnum].Controller.Buffer + i, HARDDISK_SECTOR_SIZE);
+		//ret = SparseWrite(AtaChannel[Channel].Drive[Dnum].Controller.Buffer, HARDDISK_SECTOR_SIZE);
 		if (!ret) {
 			HardDiskCommandAborted(Channel);
 			return 0;
@@ -386,23 +390,28 @@ ULONG64 HardDiskReadSector(BYTE Channel, BYTE* Buffer, DWORD BufferSize)
 
 	for (i = 0; i < AtaChannel[Channel].Drive[Dnum].Controller.BufferSize; i += HARDDISK_SECTOR_SIZE) {
 		LogicalSector = HardDiskCalculateLogicalAddress(Channel);
+		/*
 		if (LogicalSector == -1) {
 			HardDiskCommandAborted(Channel);
 			return 0;
 		}
-		ret = SparseSeek(LogicalSector * HARDDISK_SECTOR_SIZE);
+		*/
+		//ret = SparseSeek(LogicalSector * HARDDISK_SECTOR_SIZE);
+		ret = VhdSeek(LogicalSector * HARDDISK_SECTOR_SIZE);
 		/*
 		if (!ret) {
 			HardDiskCommandAborted(Channel);
 			return 0;
 		}
 		*/
-		ret = SparseRead(AtaChannel[Channel].Drive[Dnum].Controller.Buffer, HARDDISK_SECTOR_SIZE);
+		//ret = SparseRead(AtaChannel[Channel].Drive[Dnum].Controller.Buffer, HARDDISK_SECTOR_SIZE);
+		ret = VhdRead(AtaChannel[Channel].Drive[Dnum].Controller.Buffer + i, HARDDISK_SECTOR_SIZE);
+		/*
 		if (!ret) {
 			HardDiskCommandAborted(Channel);
 			return 0;
 		}
-
+		*/
 		LogicalSector = HardDiskCalculateCHS(Channel, LogicalSector);
 		AtaChannel[Channel].Drive[Dnum].NextLSector = LogicalSector;
 	}
@@ -1082,7 +1091,6 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 						
 						else 
 							AtaChannel[Channel].Drive[Dnum].Controller.BufferSize = AtaChannel[Channel].Drive[Dnum].Controller.NumberOfSectors * 512;
-						
 					}
 					else {
 						AtaChannel[Channel].Drive[Dnum].Controller.BufferSize = 512;
@@ -1159,7 +1167,7 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 					AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_REQ;
 					AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex = 0;
 
-					temp = HardDiskReadSector(Channel, AtaChannel[Channel].Drive[Dnum].Controller.Buffer, AtaChannel[Channel].Drive[Dnum].Controller.BufferSize);
+					temp = HardDiskWriteSector(Channel, AtaChannel[Channel].Drive[Dnum].Controller.Buffer, AtaChannel[Channel].Drive[Dnum].Controller.BufferSize);
 					if (!temp)
 						HardDiskCommandAborted(Channel);
 					break;
@@ -1337,8 +1345,8 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 						// addressable sectors.  This value does not depend on the current
 						// drive geometry.  If the drive does not support LBA mode, these
 						// words shall be set to 0.
-						if (SpareGetHardDiskSize() > 0)
-							temp = (SpareGetHardDiskSize() / HARDDISK_SECTOR_SIZE);
+						if (VhdGetHardDiskSize() > 0)
+							temp = (VhdGetHardDiskSize() / HARDDISK_SECTOR_SIZE);
 						else
 							temp = AtaChannel[Channel].Drive[Dnum].Cylinders * AtaChannel[Channel].Drive[Dnum].Heads * AtaChannel[Channel].Drive[Dnum].Spt;
 						AtaChannel[Channel].Drive[Dnum].DriveId[60] = (temp & 0xffff); // LSW
@@ -1748,7 +1756,7 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 						break;
 					}
 					HardDiskLba48Transform(Channel, temp);
-					temp = SpareGetHardDiskSize() / 512 - 1;
+					temp = VhdGetHardDiskSize() / 512 - 1;
 					if (AtaChannel[Channel].Drive[Dnum].Controller.Lba48) {
 						AtaChannel[Channel].Drive[Dnum].Controller.Hob.HighCylinder = (temp >> 40) & 0xff;
 						AtaChannel[Channel].Drive[Dnum].Controller.Hob.LowCylinder = (temp >> 32) & 0xff;
@@ -1898,18 +1906,20 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 						fprintf(stderr, "Error Controller.BufferIndex > Controller.BufferSize\n");
 						exit(-1);
 					}
+					if (AtaChannel[Channel].Drive[Dnum].Controller.BufferSize < AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + Length)
+						break;
 					switch (Length) {
 						case 4:
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 3];
-							temp |=  AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 2];
+							temp = *(DWORD *)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							break;
 						case 2:
-							temp |=  AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 1];
+							temp = *(WORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							break;
 						case 1:
-							temp |=  AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							temp = *(BYTE *)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
 					}
 					AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex += Length;
-					if (AtaChannel[Channel].Drive[Dnum].Controller.BufferSize > AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex)
-						break;
+					
 
 					if (AtaChannel[Channel].Drive[Dnum].Controller.CurrentCommand == IDE_COMMAND_READ_MULTIPLE
 						|| AtaChannel[Channel].Drive[Dnum].Controller.CurrentCommand == IDE_COMMAND_READ_MULTIPLE_EXT) {
@@ -1929,7 +1939,8 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 
 					if (AtaChannel[Channel].Drive[Dnum].Controller.NumberOfSectors) {
 						AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_REQ;
-						AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_SEEK_COMP;
+						//AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_SEEK_COMP;
+						AtaChannel[Channel].Drive[Dnum].Controller.Status &= ~IDE_STATUS_DEV_SEEK_COMP;
 						HardDiskReadSector(Channel, AtaChannel[Channel].Drive[Dnum].Controller.Buffer, AtaChannel[Channel].Drive[Dnum].Controller.BufferSize);
 						AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex = 0;
 						HardDiskRaiseInterrupt(Channel);
@@ -2158,11 +2169,20 @@ VOID HardDiskSeekTimer()
 
 VOID HardDiskInitialize()
 {
-	ULONG i;
+	ULONG i, PciAddress;
 	DWORD translation;
+	USHORT devFunc;
 
 	memset(&AtaChannel, '\0', sizeof(AtaChannel));
 
+	devFunc = BX_PCI_DEVICE(1, 1);
+	PciAddress = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
+	/*
+	PciSetBarIo(PciAddress, 0, 0, 8, HardDiskPortIoReadHandler, HardDiskPortIoWriteHandler, IDE_PORT_MASK);
+	PciSetBarIo(PciAddress, 1, 0, 8, HardDiskPortIoReadHandler, HardDiskPortIoWriteHandler, IDE_PORT_MASK);
+	PciSetBarIo(PciAddress, 2, 0, 8, HardDiskPortIoReadHandler, HardDiskPortIoWriteHandler, IDE_PORT_MASK);
+	PciSetBarIo(PciAddress, 3, 0, 8, HardDiskPortIoReadHandler, HardDiskPortIoWriteHandler, IDE_PORT_MASK);
+	*/
 	/* CHANNEL 0 HARD Drive */
 	AtaChannel[0].IoAddr1 = 0x1f0;
 	AtaChannel[0].IoAddr2 = 0x3f0;
@@ -2170,17 +2190,18 @@ VOID HardDiskInitialize()
 	AtaChannel[0].Drive[0].DriveType = DRIVE_TYPE_DISK;
 	AtaChannel[0].Drive[0].Controller.BufferTotalSize = MAX_MULTIPLE_SECTORS * HARDDISK_SECTOR_SIZE;
 	AtaChannel[0].Drive[0].Controller.Buffer = (BYTE*)calloc(sizeof(BYTE), MAX_MULTIPLE_SECTORS * HARDDISK_SECTOR_SIZE + 6);
+	
 	for (i = 0; i < 8; i++)
 		RegisterPortIoHandler(AtaChannel[0].IoAddr1 + i, HardDiskPortIoWriteHandler, HardDiskPortIoReadHandler);
-
 	for (i = 0; i < 8; i++)
 		RegisterPortIoHandler(AtaChannel[0].IoAddr2 + i, HardDiskPortIoWriteHandler, HardDiskPortIoReadHandler);
 	
-	SparseInitializeHardDisk("c.img");
-	AtaChannel[0].Drive[0].Cylinders = SpareGetHardDiskSize() / (HARDDISK_HEADS * HARDDISK_SECTORS * HARDDISK_SECTOR_SIZE);
+	//SparseInitializeHardDisk("c.img");
+	VhdInitializeHardDisk("c.vhd");
+	AtaChannel[0].Drive[0].Cylinders = VhdGetHardDiskSize() / (HARDDISK_HEADS * HARDDISK_SECTORS * HARDDISK_SECTOR_SIZE);
 	AtaChannel[0].Drive[0].Heads = HARDDISK_HEADS;
 	AtaChannel[0].Drive[0].Spt = HARDDISK_SPT;
-	AtaChannel[0].Drive[0].CurrentLSector = SpareGetHardDiskSize() / HARDDISK_SECTOR_SIZE;
+	AtaChannel[0].Drive[0].CurrentLSector = VhdGetHardDiskSize() / HARDDISK_SECTOR_SIZE;
 	
 	//controller initialize
 	AtaChannel[0].Drive[0].Controller.Status = IDE_STATUS_DRIVE_RDY;
@@ -2248,13 +2269,14 @@ VOID HardDiskInitialize()
 	AtaChannel[1].Drive[0].DriveType = DRIVE_TYPE_CDROM;
 	AtaChannel[1].Drive[0].Controller.BufferTotalSize = 2352;
 	AtaChannel[1].Drive[0].Controller.Buffer = (BYTE*)calloc(sizeof(BYTE), 2356);
+	
 	for (i = 0; i < 8; i++)
 		RegisterPortIoHandler(AtaChannel[1].IoAddr1 + i, HardDiskPortIoWriteHandler, HardDiskPortIoReadHandler);
 	
 	for (i = 0; i < 8; i++)
 		RegisterPortIoHandler(AtaChannel[1].IoAddr2 + i, HardDiskPortIoWriteHandler, HardDiskPortIoReadHandler);
-
-	CdRomInitialize("bootcd.iso");
+	
+	//CdRomInitialize("bootcd.iso");
 
 	//controller initialize
 	AtaChannel[1].Drive[0].Controller.Status = IDE_STATUS_DRIVE_RDY;
@@ -2264,6 +2286,7 @@ VOID HardDiskInitialize()
 	AtaChannel[1].Drive[0].Controller.SectorNumber = 1;
 
 	/* two none devices */
+	
 	AtaChannel[2].IoAddr1 = 0x1e8;
 	AtaChannel[2].IoAddr2 = 0x3e0;
 	for (i = 0; i < 8; i++)
@@ -2276,7 +2299,7 @@ VOID HardDiskInitialize()
 	for (i = 0; i < 8; i++)
 		RegisterPortIoHandler(AtaChannel[3].IoAddr1 + i, HardDiskPortIoWriteHandler, HardDiskPortIoReadHandler);
 
-	for (i = 0; i < 8; i++)
+	for (i = 0; i < 16; i++)
 		RegisterPortIoHandler(AtaChannel[3].IoAddr2 + i, HardDiskPortIoWriteHandler, HardDiskPortIoReadHandler);
 	
 	//auto detect traslation

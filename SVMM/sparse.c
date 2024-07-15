@@ -4,7 +4,7 @@
 
 struct sparse Sparse;
 
-ULONG64 SpareGetHardDiskSize(VOID)
+ULONG64 SparseGetHardDiskSize(VOID)
 {
 	return Sparse.HdSize;
 }

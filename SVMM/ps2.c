@@ -8,15 +8,7 @@
 
 PS2 Ps2;
 
-VOID Ps2Initialize()
-{
-	memset(&Ps2, '\0', sizeof(Ps2));
-	RegisterPortIoHandler(0x60, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
-	RegisterPortIoHandler(0x64, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
-	//TimerRegister(MSECONDS_TO_NS(10), Ps2TimerHandler, NULL);
-	TimerRegister(TICK_PERIOD, Ps2TimerHandler, NULL);
-	CmosSetRegister(REG_EQUIPMENT_BYTE,  CmosGetRegister(REG_EQUIPMENT_BYTE) | 0x04);
-}
+
 
 VOID Ps2EnableMouseClock(BYTE Value)
 {
@@ -24,8 +16,11 @@ VOID Ps2EnableMouseClock(BYTE Value)
 		Ps2.Mouse.MouseClockEnabled = 0;
 	}
 	else {
-		if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && !Ps2.Mouse.MouseClockEnabled)
-			Ps2ActivateTimer();
+		if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && !Ps2.Mouse.MouseClockEnabled) {
+			if (!Ps2.TimerPending)
+				Ps2.TimerPending = 1;
+			TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+		}
 		Ps2.Mouse.MouseClockEnabled = 1;
 	}
 }
@@ -36,8 +31,11 @@ VOID Ps2EnableKeyboardClock(BYTE Value)
 		Ps2.Keyboard.KeyboardClockEnabled = 0;
 	}
 	else {
-		if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && !Ps2.Keyboard.KeyboardClockEnabled)
-			Ps2ActivateTimer();
+		if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && !Ps2.Keyboard.KeyboardClockEnabled) {
+			if (!Ps2.TimerPending)
+				Ps2.TimerPending = 1;
+			TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+		}
 		Ps2.Keyboard.KeyboardClockEnabled = 1;
 	}
 }
@@ -66,17 +64,6 @@ VOID Ps2QueueByte(BYTE Data, BYTE Device)
 	}
 }
 
-VOID Ps2ActivateTimer(VOID)
-{
-	if (!Ps2.TimerPending)
-		Ps2.TimerPending = 1;
-}
-
-VOID Ps2DeactivateTimer(VOID)
-{
-	if (Ps2.TimerPending)
-		Ps2.TimerPending = 0;
-}
 
 ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 {
@@ -97,7 +84,9 @@ ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 					memcpy(Ps2.ControllerQueue, Ps2.ControllerQueue + 1, --Ps2.ControllerQueueIndex);
 				}
 				PicLowerIrq(12);
-				Ps2ActivateTimer();
+				if (!Ps2.TimerPending)
+					Ps2.TimerPending = 1;
+				TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
 			}
 			else if (Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) {
 				Ret = Ps2.KeyboardBuffer;
@@ -112,7 +101,10 @@ ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 					memcpy(Ps2.ControllerQueue, Ps2.ControllerQueue + 1, --Ps2.ControllerQueueIndex);
 				}
 				PicLowerIrq(1);
-				Ps2ActivateTimer();
+				if (!Ps2.TimerPending)
+					Ps2.TimerPending = 1;
+				TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+
 			}
 			else {
 				Ret = Ps2.KeyboardBuffer;
@@ -372,16 +364,7 @@ VOID Ps2PortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 	}
 }
 
-VOID Ps2TimerHandler(VOID)
-{
-	ULONG Ret;
 
-	Ret = Ps2TimerPeriodic(1);
-	if (Ret & DATA_KB_INTERRUPT)
-		PicRaiseIrq(1);
-	if (Ret & DATA_MS_INTERRUPT)
-		PicRaiseIrq(12);
-}
 
 ULONG Ps2TimerPeriodic(DWORD Seconds)
 {
@@ -417,4 +400,27 @@ ULONG Ps2TimerPeriodic(DWORD Seconds)
 		}
 	}
 	return Ret;
+}
+
+VOID Ps2TimerHandler(VOID)
+{
+	ULONG Ret;
+
+	Ret = Ps2TimerPeriodic(1);
+	if (Ret & DATA_KB_INTERRUPT)
+		PicRaiseIrq(1);
+	if (Ret & DATA_MS_INTERRUPT)
+		PicRaiseIrq(12);
+}
+
+VOID Ps2Initialize()
+{
+	memset(&Ps2, '\0', sizeof(Ps2));
+	RegisterPortIoHandler(0x60, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
+	RegisterPortIoHandler(0x64, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
+	//TimerRegister(MSECONDS_TO_NS(10), Ps2TimerHandler, NULL);
+	//TimerRegister(TICK_PERIOD, Ps2TimerHandler, NULL);
+	Ps2.TimerId = TimerCreate(Ps2TimerHandler, NULL);
+
+	CmosSetRegister(REG_EQUIPMENT_BYTE, CmosGetRegister(REG_EQUIPMENT_BYTE) | 0x04);
 }

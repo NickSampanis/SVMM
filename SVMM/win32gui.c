@@ -687,6 +687,8 @@ Win32GuiInitialize()
     desktop_y = desktop.bottom - desktop.top;
     max_client_x = desktop_x - 20;
     max_client_y = desktop_y - 80;
+    
+    
 }
 
 Win32GuiSetTooltip(unsigned hbar_id, const char* tip)
@@ -1459,9 +1461,6 @@ void clear_screen(void)
     LeaveCriticalSection(&stInfo.drawCS);
 }
 
-//HERE
-
-
 
 void set_font(BOOL lg)
 {
@@ -1917,7 +1916,8 @@ DWORD WINAPI UIThread()
 
 
     workerThreadID = GetCurrentThreadId();
-
+    memcpy(szMouseEnable, L"test", 8);
+    memcpy(szMouseDisable, L"test", 8);
     GetClassInfo(NULL, WC_DIALOG, &wndclass);
     wndclass.style = CS_HREDRAW | CS_VREDRAW | CS_NOCLOSE;
     wndclass.lpfnWndProc = mainWndProc;
@@ -1967,7 +1967,7 @@ DWORD WINAPI UIThread()
         SendMessage(hwndTB, TB_BUTTONSTRUCTSIZE, (WPARAM)sizeof(TBBUTTON), 0);
         SendMessage(hwndTB, TB_SETBITMAPSIZE, 0, (LPARAM)MAKELONG(32, 32));
 
-        hwndSB = CreateStatusWindow(WS_CHILD | WS_VISIBLE, L"",
+        hwndSB = CreateStatusWindow(WS_CHILD | WS_VISIBLE, L"Compiled For HP Audit",
             stInfo.mainWnd, 0x7712);
         if (hwndSB) {
             unsigned elements;
@@ -2029,7 +2029,7 @@ DWORD WINAPI UIThread()
 void SetStatusText(unsigned Num, const char* Text, BOOL active, BYTE color)
 {
     char StatText[MAX_PATH];
-
+    /*
     if ((Num < SB_Text_Elements) || (Num > (BX_MAX_STATUSITEMS + SB_Text_Elements))) {
         StatText[0] = ' ';  // Add space to text in 1st and last items
         lstrcpy(StatText + 1, Text);
@@ -2044,6 +2044,7 @@ void SetStatusText(unsigned Num, const char* Text, BOOL active, BYTE color)
         SendMessage(hwndSB, SB_SETTEXT, Num | SBT_OWNERDRAW, (LPARAM)SB_Text[Num - SB_Text_Elements]);
     }
     UpdateWindow(hwndSB);
+    */
 }
 
 void statusbar_setitem_specific(int element, BOOL active, BOOL w)

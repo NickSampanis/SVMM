@@ -3,8 +3,8 @@
 #include <Windows.h>
 #include "timer.h"
 
-//1.193181MHz Clock
-#define PIT_TICKS_PER_SECOND (1193181)
+//1.193182
+#define PIT_FREQ (1193182)
 
 #define TICKS_TO_USEC(a) (((a)*PIT_USEC_PER_SECOND)/PIT_TICKS_PER_SECOND)
 #define USEC_TO_TICKS(a) (((a)*PIT_TICKS_PER_SECOND)/PIT_USEC_PER_SECOND)
@@ -29,28 +29,23 @@
 
 
 struct Counter {
+	ULONG count;
+	BYTE countLatched;
+
 	BYTE writeState;
 	BYTE readState;
 	BYTE mode;
 	BYTE rwMode;
-	BYTE nullCount;
 	BYTE bcdMode;
-	BYTE outPin;
 	BYTE countWritten;
 	USHORT inlatch;
-	USHORT outlatch;
+	USHORT outlatch; //latched_count
 
 	BYTE statusLatch;
 	BYTE statusLatched;
-	BYTE nextChangeTime;
+	ULONG64 nextTransitionTime;
 	DWORD countBinary;
-	LONG count;
-	LONG initCount;
-	LONG countChunk;
-	LONG tickChunk;
-	LONG totalTicks;
-	LONG totalTicksInit;
-	BYTE countLatched;
+	
 	BYTE gate;
 	BYTE triggerGate;
 	DWORD timerId;
@@ -67,4 +62,5 @@ struct Pit {
 VOID PitInitialize();
 ULONG PitReadHandler(ULONG Address, ULONG Length);
 VOID PitWriteHandler(ULONG Address, ULONG Value, ULONG Length);
+DWORD TimerCreate(VOID(*TimerHandler)(VOID), VOID* Param);
 #endif

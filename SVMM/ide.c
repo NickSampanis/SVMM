@@ -195,20 +195,20 @@ VOID IdeSetIrq(BYTE Channel)
 
 VOID IdeInitialize()
 {
-	ULONG Address;
+	ULONG PciAddress;
 	USHORT devFunc;
 	BYTE i;
 
 	memset(&Ide, '\0', sizeof(Ide));
 
 	devFunc = BX_PCI_DEVICE(1, 1);
-	Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
-	RegisterPciHandler(Address, IdePciConfWriteHandler, IdePciConfReadHandler);
-	InitPciConfig(Address, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_1, 0x00, PCI_CLASS_STORAGE_IDE, 0x00, 0);
-	PciSetBarIo(Address, 4, 16, IdePortIoReadHandler, IdePortIoWriteHandler, IDE_PORT_MASK);
+	PciAddress = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
+	PciRegisterConfigHandler(PciAddress, IdePciConfWriteHandler, IdePciConfReadHandler);
+	PciInitConfig(PciAddress, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_1, 0x00, PCI_CLASS_STORAGE_IDE, 0x80, 0x00, 0);
+	PciSetBarIo(PciAddress, 4, 0, 16, IdePortIoReadHandler, IdePortIoWriteHandler, IDE_PORT_MASK);
+	
 	Ide.bmdma[0].Buffer = calloc(sizeof(BYTE), IDE_BUFFER_SIZE);
 	Ide.bmdma[1].Buffer = calloc(sizeof(BYTE), IDE_BUFFER_SIZE);
 
-	//TimerRegister(MSECONDS_TO_NS(10), IdeTimerHandler, NULL);
 	TimerRegister(TICK_PERIOD, IdeTimerHandler, NULL);
 }

@@ -97,7 +97,7 @@ VOID PicService(PIC* Pic)
 			if (!(Pic->InterruptInService & (1 << irq)) && Pic->InterruptRequest & (1 << irq)) {
 				Pic->Raised = 1;
 				Pic->InterruptNumber = irq + Pic->CurrentOffset;
-				/*
+				
 #ifdef HAXM
 				Ret = DeviceIoControl(hHaxCpu, HAX_VCPU_IOCTL_INTERRUPT, &Vector, sizeof(Vector), NULL, 0, &Bytes, NULL);
 				if (!Ret) {
@@ -114,9 +114,9 @@ VOID PicService(PIC* Pic)
 					return;
 				}
 #endif
-				*/
+				
 				svmm_events |= EVENT_PENDING_INTR;
-				RequestInterruptWindow = 1;
+				//RequestInterruptWindow = 1;
 
 			}
 		}
@@ -142,15 +142,15 @@ VOID PicService(PIC* Pic)
 		Pic->InterruptNumber = irq + Pic->CurrentOffset;
 		/* master */
 		if (Pic->InitCmd[2] & ICW3_CASCADE_ENABLE) {
-			/*
+			
 #ifdef HAXM
 			tunnel->request_interrupt_window = 1;
 #elif GVM
 			kvm_run->request_interrupt_window = 1;
 #endif
-			*/
+			
 			svmm_events |= EVENT_PENDING_INTR;
-			RequestInterruptWindow = 1;
+			//RequestInterruptWindow = 1;
 
 		}
 		else {
@@ -204,7 +204,7 @@ VOID PicLowerIrq(BYTE IrqNumber)
 
 	/* forward to IOAPIC */
 	if (IrqNumber != 2)
-		IoApicSetIrq(IrqNumber, 0);
+		IoApicLowerIrq(IrqNumber);
 
 	i = (0x7 < IrqNumber) ? 1 : 0;
 	irq = 1 << (IrqNumber & 7);
@@ -219,19 +219,18 @@ VOID PicRaiseIrq(BYTE IrqNumber)
 {
 	BYTE i, irq;
 
-	/* forward to IOAPIC */
+	/* forward to IOAPIC, unless its aimed for PIC2(IRQ2, 0x04)*/
 	if (IrqNumber != 2)
-		IoApicSetIrq(IrqNumber, 1);
+		IoApicRaiseIrq(IrqNumber);
 
 	i = (0x7 < IrqNumber) ? 1 : 0;
 	irq = 1 << (IrqNumber & 7);
 
-	if (IrqNumber > 15 || !(Pic[i].InterruptPin & irq))
+	if (IrqNumber > 15 || (Pic[i].InterruptPin & irq))
 		return;
 	Pic[i].InterruptPin |= irq;
 	Pic[i].InterruptRequest |= irq;
 	PicService(&Pic[i]);
-	
 }
 
 
@@ -284,8 +283,8 @@ VOID PicPortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 				Pic[i].CurrentPriority = 7;
 				Pic[i].Raised = 0;
 				Pic[i].Mode = 0;
-				if (!i) //master
-					Pic[i].InterruptPin = ~0x02; //all but IRQ2
+				svmm_events &= ~EVENT_PENDING_INTR;
+				
 			}
 			else if ((Value & 0x18) == OCW3_SELECT_DEFAULT) {
 				//select to read ISR or IRR
@@ -309,7 +308,7 @@ VOID PicPortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 				}
 			}
 			else {
-				switch (Value) {
+				switch (Value & 0xff) {
 					case 0u:
 					case 0x80u:
 						Pic[i].Mode = Value ? MODE_AUTO_EOI : MODE_NORMAL_EOI;
@@ -381,10 +380,12 @@ VOID PicPortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 				if (!i) {
 					Pic[i].InitCmd[2] = Value & ICW3_CASCADE_ENABLE;
 					Pic[i].State = STATE_SLAVE_SET_ICW3;
+					Pic[i].InterruptPin &= ~Value; //Disable PIN connecting to PIC2
 				}
 				else {
 					Pic[i].InitCmd[2] = ICW3_SLAVE_ID;
 					Pic[i].State = STATE_SLAVE_SET_ICW3;
+					Pic[i].InterruptPin &= ~Value; //Disable PIN connecting to PIC1
 				}
 			}
 			else if (Pic[i].State < STATE_ARCH_SET_ICW4 &&
@@ -407,7 +408,7 @@ VOID PicPortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 				}
 			}
 			else if (Pic[i].State == STATE_ARCH_SET_ICW4) {
-				Pic[i].InterruptMask = Value & 0xff; //Set IMR
+				Pic[i].InterruptMask = (Value & 0xff); //Set IMR
 				PicService(&Pic[i]);
 			}
 			break;
