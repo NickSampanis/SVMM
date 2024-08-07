@@ -486,7 +486,7 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length);
 ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length);
 VOID HardDiskReadySendAtapi(BYTE Channel);
 VOID HardDiskInitAtapiCommand(BYTE Channel, BYTE Command, DWORD ReqLength, DWORD AllocLength);
-ULONG64 HardDiskCalculateCHS(BYTE Channel, ULONG64 LogicalSector);
+ULONG64 HardDiskIncrementAddress(BYTE Channel, ULONG64 LogicalSector);
 ULONG64 HardDiskCalculateLogicalAddress(BYTE Channel);
 ULONG64 HardDiskBmdmaReadSector(BYTE Channel, BYTE* Buffer, DWORD BufferSize);
 ULONG64 HardDiskBmdmaWriteSector(BYTE Channel, BYTE* Buffer, DWORD BufferSize);

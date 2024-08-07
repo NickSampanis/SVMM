@@ -211,17 +211,19 @@ static void PitIrqTimerUpdate(ULONG Channel, ULONG64 CurrentTime, BYTE Timer)
 		case 2:
 		case 4:
 		case 5:
-			if (Timer) {
+			if (Timer && Pit.InterruptEnabled) {
 				/* flip flop*/
 				PicLowerIrq(0);
 				PicRaiseIrq(0);
 			}
 			break;
 		default:
-			if (irq_level)
-				PicRaiseIrq(0);
-			else
-				PicLowerIrq(0);
+			if (Pit.InterruptEnabled) {
+				if (irq_level)
+					PicRaiseIrq(0);
+				else
+					PicLowerIrq(0);
+			}
 	}
 	
 	Pit.counter[Channel].nextTransitionTime = expire_time;
@@ -412,6 +414,10 @@ VOID PitWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 	}
 }
 
+VOID PitSetInterrupt(BYTE Enable)
+{
+	Pit.InterruptEnabled = Enable;
+}
 
 VOID PitInitialize()
 {
@@ -435,9 +441,10 @@ VOID PitInitialize()
 		Pit.counter[i].statusLatch = 0;
 		Pit.counter[i].nextTransitionTime = 0;
 	}
-	Pit.counter[0].timerId = TimerCreate(PitTimerHandler, (VOID *)0);
+	Pit.counter[0].timerId = TimerCreate(PitTimerHandler, (VOID *)NULL);
 	//Pit.counter[0].countLoadTime = TimerGetClockNs();
 	//Pit.counter[0].nextTransitionTime = PitGetNextTransitionTime(0, Pit.counter[0].countLoadTime);
 	Pit.totalTicks = TimerGetTotalTicks();
+	Pit.InterruptEnabled = 1;
 
 }

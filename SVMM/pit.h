@@ -27,6 +27,8 @@
 #define RW_STATE_WORD0 3
 #define RW_STATE_WORD1 4
 
+#define PIT_IRQ	0
+
 
 struct Counter {
 	ULONG count;
@@ -57,10 +59,12 @@ struct Pit {
 	struct Counter counter[3];
 	ULONG64 totalTicks;
 	BYTE NextEventTime;
+	BYTE InterruptEnabled;
 };
 
 VOID PitInitialize();
 ULONG PitReadHandler(ULONG Address, ULONG Length);
 VOID PitWriteHandler(ULONG Address, ULONG Value, ULONG Length);
-DWORD TimerCreate(VOID(*TimerHandler)(VOID), VOID* Param);
+VOID PitSetInterrupt(BYTE Enable);
+
 #endif

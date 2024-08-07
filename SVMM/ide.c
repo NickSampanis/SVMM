@@ -127,8 +127,8 @@ void IdeTimerHandler()
 		return;
 
 	//TODO CHECK IF Address EXCEEDS ram size
-	memcpy(&prdEntry.Address, GetHostPageFromGPA(Ide.bmdma[channel].PrdCurrent), 4);
-	memcpy(&prdEntry.Count, GetHostPageFromGPA(Ide.bmdma[channel].PrdCurrent + 4), 4);
+	memcpy(&prdEntry.Address, SvmmGetHostPageFromGPA(Ide.bmdma[channel].PrdCurrent), 4);
+	memcpy(&prdEntry.Count, SvmmGetHostPageFromGPA(Ide.bmdma[channel].PrdCurrent + 4), 4);
 
 	size = prdEntry.Count & 0xfffe;
 	if (size == 0) 
@@ -139,7 +139,7 @@ void IdeTimerHandler()
 		Ide.bmdma[channel].BufferOffset = 0;
 
 	if (!(Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_WRITE)) 
-		memcpy(Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, GetHostPageFromGPA(prdEntry.Address), size);
+		memcpy(Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, SvmmGetHostPageFromGPA(prdEntry.Address), size);
 
 	for (i = 0; i < size; i += 512) {
 		if (i + 512 > size) {
@@ -168,7 +168,7 @@ void IdeTimerHandler()
 	}
 	
 	if (Ide.bmdma[channel].Command & IDE_BDMA_COMMAND_WRITE)
-		memcpy(GetHostPageFromGPA(prdEntry.Address), Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, size);
+		memcpy(SvmmGetHostPageFromGPA(prdEntry.Address), Ide.bmdma[channel].Buffer + Ide.bmdma[channel].BufferOffset, size);
 
 
 	/* if EOT is set, we are done */

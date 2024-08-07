@@ -4,8 +4,8 @@
 #define PCI_DEVICE_ID_INTEL_82371AB_3   0x7113
 #define ACPI_DBG_IO_ADDR				0xb044
 
-#define ACPI_PM_REGISTERS_SIZE			0x38
-#define ACPI_SM_REGISTERS_SIZE			0x38
+#define ACPI_PM_REGISTERS_SIZE			56
+#define ACPI_SM_REGISTERS_SIZE			56
 
 #define PM_FREQ							3579545
 #define RSM_STS			(1 << 15)
@@ -19,12 +19,15 @@
 #define SUS_EN			(1 << 13)
 
 struct SmBus {
-	BYTE SmHostStatus;
-	BYTE SmSlaveStatus;
-	BYTE SmHostControl;
-	BYTE SmHostCommand;
-	BYTE SmSlaveControl;
-	
+	BYTE HostStatus;
+	BYTE SlaveStatus;
+	BYTE HostControl;
+	BYTE HostCommand;
+	BYTE HostAddress;
+	BYTE HostData0;
+	BYTE HostData1;
+	BYTE SlaveControl;
+	BYTE Index;
 	BYTE Data[ACPI_SM_REGISTERS_SIZE];
 
 };
@@ -35,12 +38,11 @@ struct ACPI {
 	BYTE PmRegisters[ACPI_PM_REGISTERS_SIZE];
 	struct SmBus SmBus;
 	ULONG TimerOverflow;
-	ULONG PmStatus;
-	BYTE PmEnable;
-	BYTE PmControl;
+	USHORT PmStatus;
+	USHORT PmEnable;
+	USHORT PmControl;
 	BYTE PmTimeReg;
-
-
+	ULONG TimerId;
 }; 
 
 VOID AcpiInitialize();

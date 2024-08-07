@@ -57,13 +57,13 @@
 typedef __m128i int128_t;
 
 
-BYTE* GetHostPageFromGPA(ULONG64 gpaAddress);
+BYTE* SvmmGetHostPageFromGPA(ULONG64 gpaAddress);
 BYTE* SvmmGetHostAddress(ULONG64 GuestAddress);
 ULONG64 SvmmGetGpaFromGva(ULONG64 GuestVirtualAddress);
 
 NTSTATUS SvmmSetRegisters(struct Registers* Registers);
 NTSTATUS SvmmGetRegisters(struct Registers* Registers);
-void SvmmPrintRegisters(struct Registers* Registers);
+void SvmmPrintRegisters(void);
 VOID SvmmInitializeRegisterState(struct Registers* Registers);
 VOID SvmmInterrupt(DWORD Vector);
 

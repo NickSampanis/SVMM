@@ -216,7 +216,7 @@ VOID IoApicInitialize(VOID)
 	memset(&IoApic, '\0', sizeof(IoApic));
 	IoApic.IoApicId = 1;
 	IoApic.IoApicVersion = ((IOAPIC_NUM_PINS - 1) << 16) | IOAPIC_VERSION_82093AA;
-	RegisterMMIOHandler(IOAPIC_DEFAULT_MMIO, IoApicMMIOWriteHandler, IoApicMMIOReadHandler);
+	MmioRegisterHandler(IOAPIC_DEFAULT_MMIO, 0x1000, IoApicMMIOWriteHandler, IoApicMMIOReadHandler);
 
 	for (i = 0; i < IOAPIC_NUM_PINS; i++) {
 		IoApic.IoRedirectTable[i].Low = IOAPIC_MASKED;

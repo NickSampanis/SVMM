@@ -402,7 +402,7 @@ ULONG Ps2TimerPeriodic(DWORD Seconds)
 	return Ret;
 }
 
-VOID Ps2TimerHandler(VOID)
+VOID Ps2TimerHandler(VOID *Param)
 {
 	ULONG Ret;
 
@@ -420,7 +420,7 @@ VOID Ps2Initialize()
 	RegisterPortIoHandler(0x64, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
 	//TimerRegister(MSECONDS_TO_NS(10), Ps2TimerHandler, NULL);
 	//TimerRegister(TICK_PERIOD, Ps2TimerHandler, NULL);
-	Ps2.TimerId = TimerCreate(Ps2TimerHandler, NULL);
+	Ps2.TimerId = TimerCreate(Ps2TimerHandler, (VOID *)NULL);
 
 	CmosSetRegister(REG_EQUIPMENT_BYTE, CmosGetRegister(REG_EQUIPMENT_BYTE) | 0x04);
 }

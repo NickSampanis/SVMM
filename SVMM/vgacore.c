@@ -1917,8 +1917,7 @@ VOID VgaCoreInitialize()
 	GuiInitialize(0, NULL, 0x320, 0x258, 0x10, 0x18);
 
 	//RegisterMMIO
-    RegisterMMIOHandler(0xa0000, VgaCoreMMIOWriteHandler, VgaCoreMMIOReadHandler);
-    RegisterMMIOHandler(0xb0000, VgaCoreMMIOWriteHandler, VgaCoreMMIOReadHandler);
+    MmioRegisterHandler(0xa0000, 0x20000, VgaCoreMMIOWriteHandler, VgaCoreMMIOReadHandler);
     //RegisterMMIOHandler(0x110000, VgaCoreMMIOWriteHandler2, VgaCoreMMIOReadHandler);
 
     //0x30d40 

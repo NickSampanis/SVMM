@@ -729,7 +729,7 @@ VOID ApicMMIOReadHandler(ULONG Address, BYTE* Data, ULONG Length)
 VOID ApicInitialize(VOID)
 {
 	memset(Lapic, '\0', sizeof(Lapic));
-	RegisterMMIOHandler(APIC_DEFAULT_MMIO, ApicMMIOWriteHandler, ApicMMIOReadHandler);
+    MmioRegisterHandler(APIC_DEFAULT_MMIO, 0x1000, ApicMMIOWriteHandler, ApicMMIOReadHandler);
 
     ApicReset();    
 }

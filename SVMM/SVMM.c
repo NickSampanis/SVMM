@@ -2,7 +2,6 @@
 
 #include <stdio.h>
 #include "SVMM.h"
-#include "windbg.h"
 #include "i440fx.h"
 #include "piix3.h"
 #include "dma.h"
@@ -27,6 +26,7 @@
 #include "exdi.h"
 #include "harddisk.h"
 #include "SvmmDbgServer.h"
+#include "hpet.h"
 #include <intrin.h>
 #include <CommCtrl.h>
 
@@ -57,7 +57,7 @@ ULONG64 RamSize;
 struct Registers Registers;
 BYTE RequestInterruptWindow;
 
-BYTE *GetHostPageFromGPA(ULONG64 gpaAddress)
+BYTE *SvmmGetHostPageFromGPA(ULONG64 gpaAddress)
 {
 	BYTE* hostAddress;
 
@@ -112,14 +112,14 @@ ULONG64 Pml4GetGpaFromGva(ULONG64 Gva)
 	ULONG64 pte, phys;
 	int leaf;
 
-	phys = (ULONG64)GetHostPageFromGPA(Registers.context._cr3 & BX_CR3_PAGING_MASK);
+	phys = (ULONG64)SvmmGetHostPageFromGPA(Registers.context._cr3 & BX_CR3_PAGING_MASK);
 	for (leaf = 3; leaf >= 0; --leaf) {
 		pte = phys + ((Gva >> (9 + 9 * leaf)) & ((1 << 9) - 1));
 		if (leaf == 2 && *(ULONG64*)pte & PAGE_1GB_ENABLED)
 			return (*(ULONG64*)pte & PAGING_MASK) + (Gva & 0x1fffffff);
 		if (leaf == 1 && *(ULONG64*)pte & PAGE_2MB_ENABLED)
 			return (*(ULONG64*)pte & PAGING_MASK) + (Gva & 0x1fffff);
-		phys = (ULONG64)GetHostPageFromGPA(*(ULONG64*)pte & PAGING_MASK);
+		phys = (ULONG64)SvmmGetHostPageFromGPA(*(ULONG64*)pte & PAGING_MASK);
 	}
 	//printf("dword = 0x%x\n", *(DWORD*)(phys + (va & 0xfff)));
 	return (*(ULONG64*)pte & PAGING_MASK) + (Gva & 0xfff);
@@ -138,7 +138,7 @@ ULONG64 Pml4GetGpaFromGva(ULONG64 Gva, BYTE* Levels, ULONG LevelSize, ULONG Entr
 	LONG i, bitsSum;
 	CHAR leaf;
 
-	phys = (ULONG64)GetHostPageFromGPA(Registers.context._cr3 & BX_CR3_PAGING_MASK);
+	phys = (ULONG64)SvmmGetHostPageFromGPA(Registers.context._cr3 & BX_CR3_PAGING_MASK);
 	entry = 0;
 	for (leaf = LevelSize - 1; leaf >= 0; --leaf) {
 		bitsSum = 12;
@@ -155,7 +155,7 @@ ULONG64 Pml4GetGpaFromGva(ULONG64 Gva, BYTE* Levels, ULONG LevelSize, ULONG Entr
 			return (entry & PAGING_MASK) + (Gva & 0x1fffffff);
 		if (leaf == 1 && entry & PAGE_2MB_ENABLED)
 			return (entry & PAGING_MASK) + (Gva & 0x1fffff);
-		phys = (ULONG64)GetHostPageFromGPA(entry & PAGING_MASK);
+		phys = (ULONG64)SvmmGetHostPageFromGPA(entry & PAGING_MASK);
 		if (!phys)
 			return 0;
 	}
@@ -191,7 +191,7 @@ BYTE* SvmmGetHostAddress(ULONG64 GuestAddress)
 		gpaAddress = SvmmGetGpaFromGva(GuestAddress);
 	
 
-	return GetHostPageFromGPA(gpaAddress);
+	return SvmmGetHostPageFromGPA(gpaAddress);
 }
 
 
@@ -326,86 +326,86 @@ error:
 */
 
 
-void SvmmPrintRegisters(struct Registers* Registers)
+void SvmmPrintRegisters()
 {
 	int i;
 	ULONG64 gvaAddress;
 
-	printf("RAX = 0x%llx\n", Registers->context._rax);
-	printf("RCX = 0x%llx\n", Registers->context._rcx);
-	printf("RDX = 0x%llx\n", Registers->context._rdx);
-	printf("RBX = 0x%llx\n", Registers->context._rbx);
-	printf("RSP = 0x%llx\n", Registers->context._rsp);
-	printf("RBP = 0x%llx\n", Registers->context._rbp);
-	printf("RSI = 0x%llx\n", Registers->context._rsi);
-	printf("RDI = 0x%llx\n", Registers->context._rdi);
-	printf("R8 = 0x%llx\n", Registers->context._r8);
-	printf("R9 = 0x%llx\n", Registers->context._r9);
-	printf("R10 = 0x%llx\n", Registers->context._r10);
-	printf("R11 = 0x%llx\n", Registers->context._r11);
-	printf("R12 = 0x%llx\n", Registers->context._r12);
-	printf("R13 = 0x%llx\n", Registers->context._r13);
-	printf("R14 = 0x%llx\n", Registers->context._r14);
-	printf("R15 = 0x%llx\n", Registers->context._r15);
+	printf("RAX = 0x%llx\n", Registers.context._rax);
+	printf("RCX = 0x%llx\n", Registers.context._rcx);
+	printf("RDX = 0x%llx\n", Registers.context._rdx);
+	printf("RBX = 0x%llx\n", Registers.context._rbx);
+	printf("RSP = 0x%llx\n", Registers.context._rsp);
+	printf("RBP = 0x%llx\n", Registers.context._rbp);
+	printf("RSI = 0x%llx\n", Registers.context._rsi);
+	printf("RDI = 0x%llx\n", Registers.context._rdi);
+	printf("R8 = 0x%llx\n",  Registers.context._r8);
+	printf("R9 = 0x%llx\n",  Registers.context._r9);
+	printf("R10 = 0x%llx\n", Registers.context._r10);
+	printf("R11 = 0x%llx\n", Registers.context._r11);
+	printf("R12 = 0x%llx\n", Registers.context._r12);
+	printf("R13 = 0x%llx\n", Registers.context._r13);
+	printf("R14 = 0x%llx\n", Registers.context._r14);
+	printf("R15 = 0x%llx\n", Registers.context._r15);
 	printf("RIP = 0x%llx\n", SvmmGetRip());
-	printf("eflgs = 0x%llx\n", Registers->context._rflags);
+	printf("eflgs = 0x%llx\n", Registers.context._rflags);
 
-	printf("idtr.base = 0x%llx\n", Registers->context._idt.base);
-	printf("idtr.limit = 0x%lx\n", Registers->context._idt.limit);
-	printf("gdtr.base = 0x%llx\n", Registers->context._gdt.base);
-	printf("gdtr.limit = 0x%lx\n", Registers->context._gdt.limit);
+	printf("idtr.base = 0x%llx\n", Registers.context._idt.base);
+	printf("idtr.limit = 0x%lx\n", Registers.context._idt.limit);
+	printf("gdtr.base = 0x%llx\n", Registers.context._gdt.base);
+	printf("gdtr.limit = 0x%lx\n", Registers.context._gdt.limit);
 
-	printf("cr0 = 0x%llx\n", Registers->context._cr0);
-	printf("cr2 = 0x%llx\n", Registers->context._cr2);
-	printf("cr3 = 0x%llx\n", Registers->context._cr3);
-	printf("cr4 = 0x%llx\n", Registers->context._cr4);
+	printf("cr0 = 0x%llx\n", Registers.context._cr0);
+	printf("cr2 = 0x%llx\n", Registers.context._cr2);
+	printf("cr3 = 0x%llx\n", Registers.context._cr3);
+	printf("cr4 = 0x%llx\n", Registers.context._cr4);
 
 	//try with type = 1
 	//try with avail = 1
-	printf("\ncs selector = 0x%x\n", Registers->context._cs.selector);
-	printf("cs base = 0x%llx\n", Registers->context._cs.base);
-	printf("cs limit = 0x%lx\n", Registers->context._cs.limit);
-	printf("cs type = 0x%x\n", Registers->context._cs.type);
-	printf("cs desc = 0x%x\n", Registers->context._cs.desc);
-	printf("cs dpl = 0x%x\n", Registers->context._cs.dpl);
-	printf("cs present = 0x%x\n", Registers->context._cs.present);
-	printf("cs available = 0x%x\n", Registers->context._cs.available);
-	printf("cs long_mode = 0x%x\n", Registers->context._cs.long_mode);
-	printf("cs granularity = 0x%x\n\n", Registers->context._cs.granularity);
+	printf("\ncs selector = 0x%x\n", Registers.context._cs.selector);
+	printf("cs base = 0x%llx\n", Registers.context._cs.base);
+	printf("cs limit = 0x%lx\n", Registers.context._cs.limit);
+	printf("cs type = 0x%x\n", Registers.context._cs.type);
+	printf("cs desc = 0x%x\n", Registers.context._cs.desc);
+	printf("cs dpl = 0x%x\n", Registers.context._cs.dpl);
+	printf("cs present = 0x%x\n", Registers.context._cs.present);
+	printf("cs available = 0x%x\n", Registers.context._cs.available);
+	printf("cs long_mode = 0x%x\n", Registers.context._cs.long_mode);
+	printf("cs granularity = 0x%x\n\n", Registers.context._cs.granularity);
 
-	printf("\nds selector = 0x%x\n", Registers->context._ds.selector);
-	printf("ds base = 0x%llx\n", Registers->context._ds.base);
-	printf("ds limit = 0x%lx\n", Registers->context._ds.limit);
-	printf("ds type = 0x%x\n", Registers->context._ds.type);
-	printf("ds desc = 0x%x\n", Registers->context._ds.desc);
-	printf("ds dpl = 0x%x\n", Registers->context._ds.dpl);
-	printf("ds present = 0x%x\n", Registers->context._ds.present);
-	printf("ds available = 0x%x\n", Registers->context._ds.available);
-	printf("ds long_mode = 0x%x\n", Registers->context._ds.long_mode);
-	printf("ds granularity = 0x%x\n\n", Registers->context._ds.granularity);
+	printf("\nds selector = 0x%x\n", Registers.context._ds.selector);
+	printf("ds base = 0x%llx\n", Registers.context._ds.base);
+	printf("ds limit = 0x%lx\n", Registers.context._ds.limit);
+	printf("ds type = 0x%x\n", Registers.context._ds.type);
+	printf("ds desc = 0x%x\n", Registers.context._ds.desc);
+	printf("ds dpl = 0x%x\n", Registers.context._ds.dpl);
+	printf("ds present = 0x%x\n", Registers.context._ds.present);
+	printf("ds available = 0x%x\n", Registers.context._ds.available);
+	printf("ds long_mode = 0x%x\n", Registers.context._ds.long_mode);
+	printf("ds granularity = 0x%x\n\n", Registers.context._ds.granularity);
 
-	printf("\ngs selector = 0x%x\n", Registers->context._gs.selector);
-	printf("gs base = 0x%llx\n", Registers->context._gs.base);
-	printf("gs limit = 0x%lx\n", Registers->context._gs.limit);
-	printf("gs type = 0x%x\n", Registers->context._gs.type);
-	printf("gs desc = 0x%x\n", Registers->context._gs.desc);
-	printf("gs dpl = 0x%x\n", Registers->context._gs.dpl);
-	printf("gs present = 0x%x\n", Registers->context._gs.present);
-	printf("gs available = 0x%x\n", Registers->context._gs.available);
-	printf("gs long_mode = 0x%x\n", Registers->context._gs.long_mode);
-	printf("gs granularity = 0x%x\n\n", Registers->context._gs.granularity);
+	printf("\ngs selector = 0x%x\n", Registers.context._gs.selector);
+	printf("gs base = 0x%llx\n", Registers.context._gs.base);
+	printf("gs limit = 0x%lx\n", Registers.context._gs.limit);
+	printf("gs type = 0x%x\n", Registers.context._gs.type);
+	printf("gs desc = 0x%x\n", Registers.context._gs.desc);
+	printf("gs dpl = 0x%x\n", Registers.context._gs.dpl);
+	printf("gs present = 0x%x\n", Registers.context._gs.present);
+	printf("gs available = 0x%x\n", Registers.context._gs.available);
+	printf("gs long_mode = 0x%x\n", Registers.context._gs.long_mode);
+	printf("gs granularity = 0x%x\n\n", Registers.context._gs.granularity);
 
 
-	printf("fs selector = 0x%x\n", Registers->context._fs.selector);
-	printf("fs base = 0x%llx\n", Registers->context._fs.base);
-	printf("fs limit = 0x%lx\n", Registers->context._fs.limit);
-	printf("fs type = 0x%x\n", Registers->context._fs.type);
-	printf("fs desc = 0x%x\n", Registers->context._fs.desc);
-	printf("fs dpl = 0x%x\n", Registers->context._fs.dpl);
-	printf("fs present = 0x%x\n", Registers->context._fs.present);
-	printf("fs available = 0x%x\n", Registers->context._fs.available);
-	printf("fs long_mode = 0x%x\n", Registers->context._fs.long_mode);
-	printf("fs granularity = 0x%x\n\n", Registers->context._fs.granularity);
+	printf("fs selector = 0x%x\n", Registers.context._fs.selector);
+	printf("fs base = 0x%llx\n", Registers.context._fs.base);
+	printf("fs limit = 0x%lx\n", Registers.context._fs.limit);
+	printf("fs type = 0x%x\n", Registers.context._fs.type);
+	printf("fs desc = 0x%x\n", Registers.context._fs.desc);
+	printf("fs dpl = 0x%x\n", Registers.context._fs.dpl);
+	printf("fs present = 0x%x\n", Registers.context._fs.present);
+	printf("fs available = 0x%x\n", Registers.context._fs.available);
+	printf("fs long_mode = 0x%x\n", Registers.context._fs.long_mode);
+	printf("fs granularity = 0x%x\n\n", Registers.context._fs.granularity);
 	
 	gvaAddress = SvmmGetHostAddress(SvmmGetRip());
 	printf("GUEST RIP = 0x%llx\n", SvmmGetRip());
@@ -606,15 +606,16 @@ int main(int argc, char *argv[])
 	IoApicInitialize();
 	ApicInitialize();
 	AcpiInitialize();
+	HpetInitialize();
 	CmosSetupMemory(RamSize);
 	//CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_CD | (CMOS_BOOT_HD << 4));
 	CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_HD);
 	CmosSetRegister(CMOS_FAST_BOOT, 1);
 
 	//Load Bios At The End Of Ram
-	//Status = SvmmLoadRom("bios.bin", TYPE_SYSTEM_BIOS);
 	Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);
 	/*
+	//UEFI future stuff
 	Status = SvmmLoadRom("OVMF.fd", TYPE_SYSTEM_BIOS);
 	if (Status < 0) {
 		fprintf(stderr, "SvmmLoadRom 0x%x", Status);
@@ -655,37 +656,7 @@ int main(int argc, char *argv[])
 		goto exit;
 	}
 	
-	//Windbg Stub
-	/*
-	if (argv[1]) {
-		//Status = WindbgHandshake(argv[1]);
-		if (Status)
-			goto exit;
-		Stepping = 1;
-		do {
-			do {
-				memset(Buffer, '\0', sizeof(Buffer));
-				Status = recvfrom(windbg_sock, (char*)Buffer, sizeof(Buffer), 0, NULL, NULL);
-			} while (Stepping && (!Status || Status == -1));
-			//pkt = (PKD_PACKET)buffer;
-			Status = KdParsePacket((PKD_PACKET)Buffer);
-		} while (Status != DbgKdContinueApi2);
-		
-		KdLoadSymbols("ide.exe", 0x1000, 0x3000, 0x00);
-		do {
-			do {
-				memset(Buffer, '\0', sizeof(Buffer));
-				Status = recvfrom(windbg_sock, (char*)Buffer, sizeof(Buffer), 0, NULL, NULL);
-			} while (Stepping && (!Status || Status == -1));
-			if (!Status || Status == -1)
-				break;
-			//pkt = (PKD_PACKET)buffer;
-			Status = KdParsePacket((PKD_PACKET)Buffer);
-		} while (Status != DbgKdContinueApi2);
-		
-		Stepping = 0;
-	}
-	*/
+	
 	SvmmSetRegisters(&Registers);
 	if (argv[1]) {
 		SvmmDbgInit(argv[1]);
@@ -807,59 +778,7 @@ int main(int argc, char *argv[])
 				Status = KdParsePacket((PKD_PACKET)Buffer);
 			} while (Status != DbgKdContinueApi2);
 			InBreak = 0;
-			//SvmmPrintRegisters(&Registers);
-			//scanf_s("%d", &Bytes);
-			/*
-			if (windbg_host) {
-				memset(buffer, '\0', sizeof(buffer));
-				pkt = (PKD_PACKET)buffer;
-				pkt->packetLeader = KD_PACKET_DATA;
-				pkt->packetType = KD_PACKET_TYPE_STATE_CHANGE64;
-				pkt->length = sizeof(DBGKD_ANY_WAIT_STATE_CHANGE);
-				pkt->id = packetId;
-
-				waitChange = (PDBGKD_ANY_WAIT_STATE_CHANGE)(pkt + 1);
-				waitChange->NewState = DbgKdExceptionStateChange;
-				waitChange->ProcessorLevel = 0;
-				waitChange->Processor = 0;
-				waitChange->NumberProcessors = 1;
-				waitChange->Thread = NULL;
-				waitChange->u.Exception.FirstChance = 0x1;
-				if (BX_CPU_THIS->eflags & EFLAGS_TF_MASK)
-					waitChange->u.Exception.ExceptionRecord.ExceptionCode = STATUS_SINGLE_STEP;
-				else
-					waitChange->u.Exception.ExceptionRecord.ExceptionCode = STATUS_BREAKPOINT;
-				waitChange->u.Exception.ExceptionRecord.ExceptionAddress = (BX_CPU_THIS_PTR cr0.get32() & 1) ? RIP : RIP | (BX_CPU_THIS->sregs[BX_SEG_REG_CS].selector.value << 4);
-				waitChange->ProgramCounter = RIP; //waitChange->u.Exception.ExceptionRecord.ExceptionAddress;
-				waitChange->u.Exception.ExceptionRecord.ExceptionFlags = 0;
-				waitChange->u.Exception.ExceptionRecord.ExceptionRecord = 0;
-				waitChange->u.Exception.ExceptionRecord.NumberParameters = 0;
-				waitChange->ControlReport.Dr6 = BX_CPU_THIS->dr6.get32();
-				waitChange->ControlReport.Dr7 = BX_CPU_THIS->dr7.get32();
-				waitChange->ControlReport.EFlags = BX_CPU_THIS->eflags;
-				waitChange->ControlReport.ReportFlags = 3;
-				waitChange->ControlReport.SegCs = BX_CPU_THIS->sregs[BX_SEG_REG_CS].selector.value;
-				waitChange->ControlReport.SegDs = BX_CPU_THIS->sregs[BX_SEG_REG_DS].selector.value;
-				waitChange->ControlReport.SegEs = BX_CPU_THIS->sregs[BX_SEG_REG_ES].selector.value;
-				waitChange->ControlReport.SegFs = BX_CPU_THIS->sregs[BX_SEG_REG_FS].selector.value;
-
-				BX_CPU_THIS_PTR access_read_physical(waitChange->u.Exception.ExceptionRecord.ExceptionAddress, 16, (void*)waitChange->ControlReport.InstructionStream);
-				//memcpy((BYTE*)waitChange->ControlReport.InstructionStream, (BYTE*)BX_CPU_THIS->getHostMemAddr(waitChange->u.Exception.ExceptionRecord.ExceptionAddress, 0), 16);
-				KdSendPacketAck(pkt);
-				inbreak = 1;
-				do {
-					do {
-						memset(buffer, '\0', sizeof(buffer));
-						status = recvfrom(sock, (char*)buffer, sizeof(buffer), 0, NULL, NULL);
-					} while (inbreak && (!status || status == -1));
-					if (!status || status == -1)
-						break;
-					pkt = (PKD_PACKET)buffer;
-					status = KdParsePacket(pkt);
-				} while (status != DbgKdContinueApi2);
-				inbreak = 0;
-			}
-			*/
+			
 			break;
 		case HAX_EXIT_VMX_TIMER:
 #ifdef __DEBUG__
@@ -936,35 +855,7 @@ int main(int argc, char *argv[])
 			
 			printf("GVM_EXIT_INTR\n");
 			printf("rip = 0x%llx\n", Registers.context._rip);
-			/*
-			BOOL ret;
-
-			msrs = (struct kvm_msrs*)calloc(1, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * 2);
-			msrs->nmsrs = 2;
-			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR_CTRL;
-			msrs->entries[1].index = MSR_CORE_PERF_FIXED_CTR0;
-			ret = DeviceIoControl(hGvmCpu, GVM_GET_MSRS,
-				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
-				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
-				(LPOVERLAPPED)NULL);
-			if (!ret) {
-				perror("Driver GVM DeviceIoControl GVM_EXIT_WATCHDOG GVM_GET_MSRS");
-				exit(-1);
-			}
-			//printf("msr[0x%x] = 0x%llx\n", msrs->entries[0].index, msrs->entries[0].data);
-			//printf("msr[0x%x] = 0x%llx\n", msrs->entries[1].index, msrs->entries[1].data);
-
-			//scanf_s("%d", &Bytes);
-			msrs->nmsrs = 1;
-			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR0;
-			msrs->entries[0].data = (1ULL << 48) - TICK_PERIOD; // | (1 << 3);
-			Ret = DeviceIoControl(hGvmCpu, GVM_SET_MSRS,
-				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
-				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
-				(LPOVERLAPPED)NULL);
-			TimerTick(TICK_PERIOD);
-			free(msrs);
-			*/
+	
 			break;
 		case GVM_EXIT_UNKNOWN:
 			printf("GVM_EXIT_UNKNOWN\n");
@@ -988,9 +879,9 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 #endif
 			if (!kvm_run->mmio.is_write)
-				ReadMMIOHandler(kvm_run->mmio.phys_addr, (BYTE*)kvm_run->mmio.data, kvm_run->mmio.len);
+				MmioReadHandler(kvm_run->mmio.phys_addr, (BYTE*)kvm_run->mmio.data, kvm_run->mmio.len);
 			else
-				WriteMMIOHandler(kvm_run->mmio.phys_addr, (BYTE*)kvm_run->mmio.data, kvm_run->mmio.len);
+				MmioWriteHandler(kvm_run->mmio.phys_addr, (BYTE*)kvm_run->mmio.data, kvm_run->mmio.len);
 			break;
 		case GVM_EXIT_SHUTDOWN:
 			printf("GVM_EXIT_SHUTDOWN\n");
@@ -1016,24 +907,7 @@ int main(int argc, char *argv[])
 #ifdef __DEBUG__
 			printf("GVM_EXIT_WATCHDOG\n");
 #endif
-			/*
-			if (argv[1] && !Stepping) {
-				printf("stepping %d\n", Stepping);
-				memset(Buffer, '\0', sizeof(Buffer));
-				Status = recvfrom(windbg_sock, (char*)Buffer, sizeof(Buffer), 0, NULL, NULL);
-				if (Status == 1 && Buffer[0] == KD_PACKET_BREAK) {
-					KdSendSingleStep();
-					do {
-						do {
-							memset(Buffer, '\0', sizeof(Buffer));
-							Status = recvfrom(windbg_sock, (char*)Buffer, sizeof(Buffer), 0, NULL, NULL);
-						} while (Stepping && (!Status || Status == -1));
-						Status = KdParsePacket((PKD_PACKET)Buffer);
-					} while (Status != DbgKdContinueApi2);
-				}
-			}
-			*/
-			//TimerTick(MSECONDS_TO_NS(1));
+			
 			
 			//SvmmSetRegisters(&Registers);
 			//scanf_s("%d", &Bytes);
@@ -1082,36 +956,7 @@ int main(int argc, char *argv[])
 			break;
 		case GVM_EXIT_DEBUG:
 			//printf("GVM_EXIT_DEBUG\n");
-			//printf("rip = 0x%llx\n", SvmmGetRip());
-			/*
-			msrs = (struct kvm_msrs*)calloc(1, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * 2);
-			msrs->nmsrs = 2;
-			msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR_CTRL;
-			msrs->entries[1].index = MSR_CORE_PERF_FIXED_CTR0;
-			ret = DeviceIoControl(hGvmCpu, GVM_GET_MSRS,
-				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
-				msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
-				(LPOVERLAPPED)NULL);
-			if (!ret) {
-				perror("Driver GVM DeviceIoControl GVM_EXIT_WATCHDOG GVM_GET_MSRS");
-				exit(-1);
-			}
-			printf("msr[0x%x] = 0x%llx\n", msrs->entries[0].index, msrs->entries[0].data);
-			printf("msr[0x%x] = 0x%llx\n", msrs->entries[1].index, msrs->entries[1].data);
-			
-			
-			if (msrs->entries[1].data == 0) {
-				msrs->nmsrs = 1;
-				msrs->entries[0].index = MSR_CORE_PERF_FIXED_CTR0;
-				msrs->entries[0].data = (1ULL << 48) - 2; // | (1 << 3);
-				ret = DeviceIoControl(hGvmCpu, GVM_SET_MSRS,
-					msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs,
-					msrs, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * msrs->nmsrs, &bytes,
-					(LPOVERLAPPED)NULL);
-			}
-			
-			free(msrs);
-			*/
+
 			
 			if (argv[1]) {
 				if (*SvmmGetHostAddress(SvmmGetRip()) == 0xcc || 

@@ -311,13 +311,13 @@ BYTE SvmmDbgLoop()
                 pktReadReq = (PDBG_PACKET_READ_REQUEST)pktHdr->Data;
                 //printf("read request addr 0x%llx size 0x%llx\n", pktReadReq->Addr, pktReadReq->Size);
                 
-                if (GetHostPageFromGPA(pktReadReq->Addr) + pktReadReq->Size >= MemoryEnd) {
+                if (SvmmGetHostPageFromGPA(pktReadReq->Addr) + pktReadReq->Size >= MemoryEnd) {
                     fprintf(stderr, "SvmmGetHostAddress(Req->Addr) + Req->Size >= MemoryEnd)\n");
                     exit(-1);
                 }
                 
                 for (i = 0; i < (LONG64)pktReadReq->Size; i += DBG_MAX_PACKET_DATA_SIZE) {
-                    SvmmDbgSend(DBG_TYPE_READ_MEMORY, GetHostPageFromGPA(pktReadReq->Addr + i),
+                    SvmmDbgSend(DBG_TYPE_READ_MEMORY, SvmmGetHostPageFromGPA(pktReadReq->Addr + i),
                         (pktReadReq->Size - i) > DBG_MAX_PACKET_DATA_SIZE ? DBG_MAX_PACKET_DATA_SIZE : (pktReadReq->Size - i));
                 }
                 break;
@@ -328,15 +328,15 @@ BYTE SvmmDbgLoop()
                 }
                 pktWriteReq = (PDBG_PACKET_WRITE_REQUEST)pktHdr->Data;
                 
-                if (GetHostPageFromGPA(pktWriteReq->Addr) + pktWriteReq->Size >= MemoryEnd) {
+                if (SvmmGetHostPageFromGPA(pktWriteReq->Addr) + pktWriteReq->Size >= MemoryEnd) {
                     fprintf(stderr, "SvmmGetHostAddress(Req->Addr) + Req->Size >= MemoryEnd)\n");
                     exit(-1);
                 }
                 for (i = 0; i < (LONG64)pktWriteReq->Size; i += DBG_MAX_PACKET_DATA_SIZE) {
-                    SvmmDbgRecv(DBG_TYPE_WRITE_MEMORY, GetHostPageFromGPA(pktWriteReq->Addr + i),
+                    SvmmDbgRecv(DBG_TYPE_WRITE_MEMORY, SvmmGetHostPageFromGPA(pktWriteReq->Addr + i),
                         (pktWriteReq->Size - i) > DBG_MAX_PACKET_DATA_SIZE ? DBG_MAX_PACKET_DATA_SIZE : (pktWriteReq->Size - i));
                 }
-                if (pktWriteReq->Size == 1 && *GetHostPageFromGPA(pktWriteReq->Addr) == 0xcc) {
+                if (pktWriteReq->Size == 1 && *SvmmGetHostPageFromGPA(pktWriteReq->Addr) == 0xcc) {
                     memset(&kvm_debug, '\0', sizeof(kvm_debug));
                     kvm_debug.control = GVM_GUESTDBG_ENABLE | GVM_GUESTDBG_USE_SW_BP | GVM_GUESTDBG_USE_HW_BP;
                     DeviceIoControl(hGvmCpu, GVM_SET_GUEST_DEBUG, &kvm_debug, sizeof(kvm_debug), (LPVOID)NULL, 0, &bytes, NULL);

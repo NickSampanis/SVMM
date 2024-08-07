@@ -1,5 +1,5 @@
-#ifndef PCI_H
-#define PCI_H
+#pragma once
+
 #include <Windows.h>
 
 #define BX_PCI_BAR_TYPE_NONE 0
@@ -8,7 +8,7 @@
 
 
 #define MAX_PCI_DEVICES_PER_BUS (256)
-#define MAX_BUSES				(2)
+#define MAX_BUSES				(256)
 
 #define BX_PCI_DEVICE(device, function)						((device) << 3 | (function))
 #define PCI_DEVFUNC_OFFSET_TO_ADDRESS(bus, devFunc, offset)	((bus << 16) | (devFunc << 8) | (offset))
@@ -93,11 +93,11 @@ typedef VOID(*WritePortIoHandlerCallback)(ULONG Address, ULONG Value, ULONG Leng
 typedef VOID(*ReadMMIOHandlerCallback)(ULONG Address, BYTE *Data, ULONG Length);
 typedef VOID(*WriteMMIOHandlerCallback)(ULONG Address, BYTE *Data, ULONG Length);
 
-NTSTATUS RegisterMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandler, ReadMMIOHandlerCallback ReadHandler);
-VOID ReadMMIOHandler(ULONG Address, BYTE* Data, ULONG Len);
-VOID WriteMMIOHandler(ULONG Address, BYTE* Data, ULONG Len);
-VOID GetMMIOHandler(ULONG Address, WriteMMIOHandlerCallback* WriteHandler, ReadMMIOHandlerCallback* ReadHandler);
-NTSTATUS RemoveMMIOHandler(ULONG Address);
+NTSTATUS MmioRegisterHandler(ULONG Address, ULONG Size, WriteMMIOHandlerCallback WriteHandler, ReadMMIOHandlerCallback ReadHandler);
+VOID MmioReadHandler(ULONG Address, BYTE* Data, ULONG Length);
+VOID MmioWriteHandler(ULONG Address, BYTE* Data, ULONG Length);
+//VOID GetMMIOHandler(ULONG Address, WriteMMIOHandlerCallback* WriteHandler, ReadMMIOHandlerCallback* ReadHandler);
+NTSTATUS MmioRemoveHandler(ULONG Address);
 
 
 NTSTATUS RegisterPortIoHandler(ULONG Address, WritePortIoHandlerCallback WriteHandler, ReadPortIoHandlerCallback ReadHandler);
@@ -116,7 +116,7 @@ ULONG PciReadConfHandler(ULONG PciAddress, ULONG Length);
 VOID PciInitConfig(ULONG PciAddress, USHORT Vendor, USHORT Device, BYTE Revision, ULONG Class, BYTE ProgIf, BYTE Type, BYTE Interrupt);
 void PciSetBarIo(ULONG PciAddress, BYTE BarNumber, ULONG BarAddress, USHORT size, ReadPortIoHandlerCallback ReadPortHandler, WritePortIoHandlerCallback WritePortHandler, ULONG64 Mask);
 void PciSetBarMmio(ULONG PciAddress, BYTE BarNumber, ULONG BarAddress, DWORD size, ReadMMIOHandlerCallback ReadMMIOHandler, WriteMMIOHandlerCallback WriteMMIOHandler);
-VOID PciSetIrq(ULONG PciAddress, BYTE line, BYTE level);
+VOID PciSetIrq(ULONG PciAddress, BYTE IrqNumber, BYTE Raise);
 
 
 struct pci_bar {
@@ -136,4 +136,3 @@ typedef struct _PCI {
 	ReadPciConfigHandlerCallback ReadPciConfHandler;
 }PCI, *PPCI;
 
-#endif

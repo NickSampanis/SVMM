@@ -21,7 +21,7 @@
 #define  MSECONDS_TO_NS(s)			(s * 1000000ULL)
 #define	 USECONDS_TO_NS(s)			(s * 1000ULL)
 
-typedef VOID(*TimerHandler)(VOID);
+typedef VOID(*TimerHandler)(VOID *);
 
 typedef struct _TIMER {
 	TimerHandler Handler;
@@ -33,8 +33,8 @@ typedef struct _TIMER {
 }TIMER, *PTIMER;
 
 VOID TimerInitialize(VOID);
-DWORD TimerCreate(VOID(*TimerHandler)(VOID), VOID* Param);
-DWORD TimerRegister(DWORD Nseconds, VOID(*TimerHandler)(VOID), VOID* Param);
+DWORD TimerCreate(VOID(*TimerHandler)(VOID *), VOID* Param);
+DWORD TimerRegister(DWORD Nseconds, VOID(*TimerHandler)(VOID *), VOID* Param);
 VOID TimerTick(ULONG64 Nseconds);
 TIMER TimerGet(DWORD Index);
 VOID TimerActivate(DWORD Index, ULONG64 Nseconds, BYTE OneShot);

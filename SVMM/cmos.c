@@ -137,9 +137,9 @@ VOID CmosPeriodicTimer()
 {
     if (Cmos.Registers[REG_STAT_B] & 0x40) {
         Cmos.Registers[REG_STAT_C] |= 0xc0; // Interrupt Request, Periodic Int
-        if (Cmos.irq_enabled) {
-            PicRaiseIrq(8);
-        }
+        if (Cmos.InterruptEnabled)
+            PicRaiseIrq(RTC_IRQ);
+        
     }
 }
 
@@ -177,9 +177,9 @@ void CmosUipTimer()
     if (Cmos.Registers[REG_STAT_B] & 0x10) {
         Cmos.Registers[REG_STAT_C] |= 0x90; // Interrupt Request, Update Ended
         //Cmos.Registers[REG_STAT_C] = 0x41;
-        if (Cmos.irq_enabled) {
-            PicRaiseIrq(8);
-        }
+        if (Cmos.InterruptEnabled) 
+            PicRaiseIrq(RTC_IRQ);
+        
     }
 
     // compare CMOS user copy of time/date to alarm time/date here
@@ -203,9 +203,9 @@ void CmosUipTimer()
         }
         if (alarm_match) {
             Cmos.Registers[REG_STAT_C] |= 0xa0; // Interrupt Request, Alarm Int
-            if (Cmos.irq_enabled) {
-                PicRaiseIrq(8);
-            }
+            if (Cmos.InterruptEnabled) 
+                PicRaiseIrq(RTC_IRQ);
+            
         }
     }
     Cmos.Registers[REG_STAT_A] &= 0x7f; // clear UIP bit
@@ -426,6 +426,13 @@ VOID CmosCheckSum(VOID)
     Cmos.Registers[REG_CSUM_LOW] = (sum & 0xff);      /* checksum low */
 }
 
+VOID CmosSetInterrupt(BYTE Enable)
+{
+    Cmos.InterruptEnabled = Enable;
+
+}
+
+
 VOID CmosInitialize()
 {
     char* tmptime;
@@ -452,7 +459,7 @@ VOID CmosInitialize()
     Cmos.timeval = time(NULL);
 
     CmosUpdateClock();
-    Cmos.irq_enabled = 1;
+    Cmos.InterruptEnabled = 1;
 
     while ((tmptime = _strdup(ctime(&(Cmos.timeval)))) == NULL) {
         exit(-1);

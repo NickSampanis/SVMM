@@ -42,15 +42,17 @@
 
 #define BASE_MEMORY_IN_K  640
 
+#define RTC_IRQ	8
+
 typedef struct _CMOS_STATE {
 	BYTE Registers[256];
 	BYTE CmosAddress;
 	BYTE CmosExtAddress;
-	BYTE    timeval_change;
-	BYTE    rtc_mode_12hour;
-	BYTE    rtc_mode_binary;
-	BYTE    rtc_sync;
-	BYTE irq_enabled;
+	BYTE timeval_change;
+	BYTE rtc_mode_12hour;
+	BYTE rtc_mode_binary;
+	BYTE rtc_sync;
+	BYTE InterruptEnabled;
 	time_t    timeval;
 	DWORD PeriodicIntervalUsec;
 
@@ -63,4 +65,6 @@ VOID CmosSetRegister(BYTE Address, BYTE Value);
 BYTE CmosGetRegister(BYTE Address);
 VOID CmosSetupMemory(SIZE_T MemorySize);
 VOID CmosCheckSum(VOID);
+VOID CmosSetInterrupt(BYTE Enable);
+
 #endif

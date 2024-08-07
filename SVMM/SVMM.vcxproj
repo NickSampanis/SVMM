@@ -153,6 +153,7 @@
     <ClCompile Include="gvm.c" />
     <ClCompile Include="harddisk.c" />
     <ClCompile Include="haxm.c" />
+    <ClCompile Include="hpet.c" />
     <ClCompile Include="i440fx.c" />
     <ClCompile Include="ide.c" />
     <ClCompile Include="ioapic.c" />
@@ -188,6 +189,7 @@
     <ClInclude Include="gvm_ver.h" />
     <ClInclude Include="harddisk.h" />
     <ClInclude Include="haxm.h" />
+    <ClInclude Include="hpet.h" />
     <ClInclude Include="i440fx.h" />
     <ClInclude Include="ide.h" />
     <ClInclude Include="ioapic.h" />

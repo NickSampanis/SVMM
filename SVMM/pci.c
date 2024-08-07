@@ -3,6 +3,8 @@
 #include "SVMM.h"
 #include "haxm.h"
 #include "gvm.h"
+#include "ioapic.h"
+#include "pic.h"
 #include <stdio.h>
 
 //PORT IO
@@ -12,8 +14,9 @@ static ReadPortIoHandlerCallback ReadPortHandlers[0xffff];
 
 //MMIO 
 static RTL_BITMAP  MMIOBitmap;
-static WriteMMIOHandlerCallback WriteMMIOHandlers[0xffff];
-static ReadMMIOHandlerCallback ReadMMIOHandlers[0xffff];
+static WriteMMIOHandlerCallback MmioWriteHandlers[0xffff];
+static ReadMMIOHandlerCallback MmioReadHandlers[0xffff];
+
 
 
 PCI PciDevices[MAX_BUSES][MAX_PCI_DEVICES_PER_BUS];
@@ -169,7 +172,6 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 				PciDevices[bus][devFunc].conf[offset + i] = value8;
 			}
 			if (bar_change) {
-				
 				if (PciDevices[bus][devFunc].bar[barNum].type == BX_PCI_BAR_TYPE_IO) {
 					if (Value == 0xffffffff) {
 						DWORD mask;
@@ -188,6 +190,7 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 						*/
 						return;
 					}
+					
 					for (i = 0; i < PciDevices[bus][devFunc].bar[barNum].size; i++) {
 						if (PciDevices[bus][devFunc].bar[barNum].mask & (1ULL << i))
 							continue;
@@ -212,10 +215,10 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 
 					for (i = 0; i < PciDevices[bus][devFunc].bar[barNum].size; i += 0x10000) {
 						if (PciDevices[bus][devFunc].bar[barNum].addr)
-							RemoveMMIOHandler(PciDevices[bus][devFunc].bar[barNum].addr + i);
+							MmioRemoveHandler(PciDevices[bus][devFunc].bar[barNum].addr + i);
 						MMIOWriteHandler = PciDevices[bus][devFunc].bar[barNum].WriteHandler;
 						MMIOReadHandler = PciDevices[bus][devFunc].bar[barNum].ReadHandler;
-						RegisterMMIOHandler((Value & ~3) + i, MMIOWriteHandler, MMIOReadHandler);
+						MmioRegisterHandler((Value & ~3) + i, 0x1000, MMIOWriteHandler, MMIOReadHandler);
 					}
 				}
 				PciDevices[bus][devFunc].bar[barNum].addr = (Value & ~3);
@@ -358,7 +361,7 @@ void PciSetBarMmio(ULONG PciAddress, BYTE BarNumber, ULONG BarAddress, DWORD Siz
 
 
 //Register MMIO, each entry should 0x10000 in size
-NTSTATUS RegisterMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandler, ReadMMIOHandlerCallback ReadHandler)
+NTSTATUS MmioRegisterHandler(ULONG Address, ULONG Size, WriteMMIOHandlerCallback WriteHandler, ReadMMIOHandlerCallback ReadHandler)
 {
 	PULONG buffer;
 	ULONG index;
@@ -370,75 +373,102 @@ NTSTATUS RegisterMMIOHandler(ULONG Address, WriteMMIOHandlerCallback WriteHandle
 		RtlInitializeBitMap(&MMIOBitmap, buffer, 0xffff / 32);
 	}
 	if (index >= 0xffff || RtlTestBit(&MMIOBitmap, index)) {
-		fprintf(stderr, "Error in RegisterMMIOHandler, Address already mapped!\n");
+		fprintf(stderr, "Error in MmioRegisterHandler, Address already mapped!\n");
 		exit(-1);
 	}
-	RtlSetBit(&MMIOBitmap, index);
-	WriteMMIOHandlers[index] = WriteHandler;
-	ReadMMIOHandlers[index] = ReadHandler;
-	gvm_register_mmio(Address, 0x10000);
+	do {
+		RtlSetBit(&MMIOBitmap, index);
+		MmioWriteHandlers[index] = WriteHandler;
+		MmioReadHandlers[index] = ReadHandler;
+		index++;
+	} while (index << 16 < Address + Size);
+	
+	gvm_register_mmio(Address, Size);
 
 	return 0;
 }
 
-VOID GetMMIOHandler(ULONG Address, WriteMMIOHandlerCallback* WriteHandler, ReadMMIOHandlerCallback* ReadHandler)
-{
-	ULONG index;
 
-	index = Address >> 16;
-	if (index >= 0xffff || !RtlTestBit(&MMIOBitmap, index) || !ReadMMIOHandlers[index] || !WriteMMIOHandlers[index]) {
-		fprintf(stderr, "Error in ReadMMIOHandler, Address 0x%lx is not mapped!\n", Address);
-		exit(-1);
-	}
-	*WriteHandler = WriteMMIOHandlers[index];
-	*ReadHandler = ReadMMIOHandlers[index];
-}
-
-NTSTATUS RemoveMMIOHandler(ULONG Address)
+NTSTATUS MmioRemoveHandler(ULONG Address)
 {
 	ULONG index;
 
 	index = Address >> 16;
 
 	if (index >= 0xffff || !RtlTestBit(&MMIOBitmap, index)) {
-		fprintf(stderr, "Error in RegisterMMIOHandler, Address 0x%lx not mapped!\n", Address);
+		fprintf(stderr, "Error in MmioRemoveHandler, Address 0x%lx not mapped!\n", Address);
 		exit(-1);
 	}
+	//todo
 	RtlClearBit(&MMIOBitmap, index);
-	WriteMMIOHandlers[index] = NULL;
-	ReadMMIOHandlers[index] = NULL;
+	MmioWriteHandlers[index] = NULL;
+	MmioReadHandlers[index] = NULL;
 	gvm_remove_mmio(Address, 0x10000);
 
 	return 0;
 }
 
-VOID ReadMMIOHandler(ULONG Address, BYTE *Data, ULONG Length)
+VOID MmioReadHandler(ULONG Address, BYTE *Data, ULONG Length)
 {
 	ULONG index;
 
 	index = Address >> 16;
 
-	if (index >= 0xffff || !RtlTestBit(&MMIOBitmap, index) || !ReadMMIOHandlers[index]) {
-		fprintf(stderr, "Error in ReadMMIOHandler, Address 0x%lx is not mapped!\n", Address);
+	if (index >= 0xffff || !RtlTestBit(&MMIOBitmap, index) || !MmioReadHandlers[index]) {
+		fprintf(stderr, "Error in MmioReadHandler, Address 0x%lx is not mapped! in \n", Address);
+		SvmmPrintRegisters();
 		exit(-1);
 	}
-	ReadMMIOHandlers[index](Address, Data, Length);
+	MmioReadHandlers[index](Address, Data, Length);
 }
 
-VOID WriteMMIOHandler(ULONG Address, BYTE *Data, ULONG Length)
+VOID MmioWriteHandler(ULONG Address, BYTE *Data, ULONG Length)
 {
 	ULONG index;
 
 	index = Address >> 16;
 
-	if (index >= 0xffff || !RtlTestBit(&MMIOBitmap, index) || !WriteMMIOHandlers[index]) {
-		fprintf(stderr, "Error in WriteMMIOHandler, Address 0x%lx is not mapped!\n", Address);
+	if (index >= 0xffff || !RtlTestBit(&MMIOBitmap, index) || !MmioWriteHandlers[index]) {
+		fprintf(stderr, "Error in MmioWriteHandler, Address 0x%lx is not mapped!\n", Address);
 		exit(-1);
 	}
-	WriteMMIOHandlers[index](Address, Data, Length);
+	MmioWriteHandlers[index](Address, Data, Length);
 }
 
-VOID PciSetIrq(ULONG Address, BYTE line, BYTE level)
+VOID PciSetIrq(ULONG PciAddress, BYTE IrqNumber, BYTE Raise)
 {
+	ULONG devFunc, bus;
+	BYTE irq;
 
+	bus = PCI_ADDRESS_TO_BUS(PciAddress);
+	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(PciAddress);
+	irq = ((devFunc >> 3) + IrqNumber - 2) & 3;
+	if (Raise)
+		IoApicRaiseIrq(IrqNumber + irq);
+	else
+		IoApicLowerIrq(IrqNumber + irq);
+	
+	irq = PciDevices[bus][devFunc].conf[0x60 + irq];
+	if ((irq < 16) && (((1 << irq) & 0xdef8) > 0)) {
+		if (Raise) {
+			/*
+			if (!BX_P2I_THIS s.irq_level[0][irq] && !BX_P2I_THIS s.irq_level[1][irq] &&
+				!BX_P2I_THIS s.irq_level[2][irq] && !BX_P2I_THIS s.irq_level[3][irq]) {
+				PicRaiseIrq(irq);
+			}
+			BX_P2I_THIS s.irq_level[pirq][irq] |= (1 << (devFunc >> 3));
+			*/
+			PicRaiseIrq(irq);
+		}
+		else {
+			/*
+			BX_P2I_THIS s.irq_level[pirq][irq] &= ~(1 << (devFunc >> 3));
+			if (!BX_P2I_THIS s.irq_level[0][irq] && !BX_P2I_THIS s.irq_level[1][irq] &&
+				!BX_P2I_THIS s.irq_level[2][irq] && !BX_P2I_THIS s.irq_level[3][irq]) {
+				PicLowerIrq(irq);
+			}
+			*/
+			PicLowerIrq(irq);
+		}
+	}
 }

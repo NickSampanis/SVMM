@@ -152,7 +152,7 @@ VOID HardDiskReadySendAtapi(BYTE Channel)
 }
 
 //increments the logical sector and calculates chs
-ULONG64 HardDiskCalculateCHS(BYTE Channel, ULONG64 LogicalSector)
+ULONG64 HardDiskIncrementAddress(BYTE Channel, ULONG64 LogicalSector)
 {
 	BYTE Dnum;
 
@@ -210,6 +210,7 @@ ULONG64 HardDiskCalculateLogicalAddress(BYTE Channel)
 	Dnum = AtaChannel[Channel].DriveSelect ? 1 : 0;
 	LogicalSector = 0;
 
+	
 	if (AtaChannel[Channel].Drive[Dnum].Controller.AddressMode) {
 		if (AtaChannel[Channel].Drive[Dnum].Controller.Lba48) {
 			/*
@@ -352,7 +353,7 @@ ULONG64 HardDiskWriteSector(BYTE Channel, BYTE* Buffer, DWORD BufferSize)
 			return 0;
 		}
 
-		LogicalSector = HardDiskCalculateCHS(Channel, LogicalSector);
+		LogicalSector = HardDiskIncrementAddress(Channel, LogicalSector);
 		AtaChannel[Channel].Drive[Dnum].NextLSector = LogicalSector;
 	}
 	return i;
@@ -412,7 +413,7 @@ ULONG64 HardDiskReadSector(BYTE Channel, BYTE* Buffer, DWORD BufferSize)
 			return 0;
 		}
 		*/
-		LogicalSector = HardDiskCalculateCHS(Channel, LogicalSector);
+		LogicalSector = HardDiskIncrementAddress(Channel, LogicalSector);
 		AtaChannel[Channel].Drive[Dnum].NextLSector = LogicalSector;
 	}
 	return i;
@@ -513,12 +514,13 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 					}
 					switch (Length) {
 						case 4:
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 3] = Value >> 24;
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 2] = Value >> 16;
+							*(DWORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = Value;
+							break;
 						case 2:
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 1] = Value >> 8;
+							*(WORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = Value;
+							break;
 						case 1:
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = Value;
+							*(BYTE*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = Value;
 					}
 					AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex += Length;
 					if (AtaChannel[Channel].Drive[Dnum].Controller.BufferSize > AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex)
@@ -557,12 +559,13 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 					/* Fetch the packet from portIO */
 					switch (Length) {
 						case 4:
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 3] = (BYTE)(Value >> 24);
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 2] = (BYTE)(Value >> 16);
+							*(DWORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = Value;
+							break;
 						case 2:
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 1] = (BYTE)(Value >> 8);
+							*(WORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = Value;
+							break;
 						case 1:
-							AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = (BYTE)(Value);
+							*(BYTE*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] = Value;
 					}
 					AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex += Length;
 					if (AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex < PACKET_SIZE)
@@ -1113,6 +1116,11 @@ VOID HardDiskPortIoWriteHandler(ULONG Address, ULONG Value, ULONG Length)
 					temp = HardDiskReadSector(Channel, AtaChannel[Channel].Drive[Dnum].Controller.Buffer, AtaChannel[Channel].Drive[Dnum].Controller.BufferSize);
 					if (!temp)
 						HardDiskCommandAborted(Channel);
+					else {
+						AtaChannel[Channel].Drive[Dnum].Controller.Status &= ~IDE_STATUS_BUSY;
+						AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_REQ;
+
+					}
 					break;
 				case IDE_COMMAND_VERIFY_EXT:
 					temp = 1;
@@ -1895,7 +1903,10 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 	Dnum = AtaChannel[Channel].DriveSelect ? 1 : 0;
 	temp = 0;
 	switch (Port) {
-		case 0: // hard disk data (16bit) 0x1f0
+		case 0: 
+			//Dev request should be set
+			if (!(AtaChannel[Channel].Drive[Dnum].Controller.Status & IDE_STATUS_DEV_REQ))
+				return 0;
 			switch (AtaChannel[Channel].Drive[Dnum].Controller.CurrentCommand) {
 				case IDE_COMMAND_READ:
 				case IDE_COMMAND_READ_WITHOUT_RETRIES:
@@ -1920,7 +1931,9 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 					}
 					AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex += Length;
 					
-
+					if (AtaChannel[Channel].Drive[Dnum].Controller.BufferSize > AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex)
+						return temp;
+					//Buffer is full, read next sector
 					if (AtaChannel[Channel].Drive[Dnum].Controller.CurrentCommand == IDE_COMMAND_READ_MULTIPLE
 						|| AtaChannel[Channel].Drive[Dnum].Controller.CurrentCommand == IDE_COMMAND_READ_MULTIPLE_EXT) {
 						if (AtaChannel[Channel].Drive[Dnum].Controller.NumberOfSectors > AtaChannel[Channel].Drive[Dnum].Controller.MultipleSectors)
@@ -1939,8 +1952,7 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 
 					if (AtaChannel[Channel].Drive[Dnum].Controller.NumberOfSectors) {
 						AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_REQ;
-						//AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_SEEK_COMP;
-						AtaChannel[Channel].Drive[Dnum].Controller.Status &= ~IDE_STATUS_DEV_SEEK_COMP;
+						AtaChannel[Channel].Drive[Dnum].Controller.Status |= IDE_STATUS_DEV_SEEK_COMP;
 						HardDiskReadSector(Channel, AtaChannel[Channel].Drive[Dnum].Controller.Buffer, AtaChannel[Channel].Drive[Dnum].Controller.BufferSize);
 						AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex = 0;
 						HardDiskRaiseInterrupt(Channel);
@@ -1964,27 +1976,17 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 						AtaChannel[Channel].Drive[Dnum].Controller.Status &= ~IDE_STATUS_DEV_REQ;
 					
 					switch (Length) {
-						case 1:
-							temp = AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
-							AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex++;
-							return temp;
-						case 2:
-							temp = AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
-							AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex++;
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] << 8;
-							AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex++;
-							return temp;
 						case 4:
-							temp = AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
-							AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex++;
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] << 8;
-							AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex++;
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] << 16;
-							AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex++;
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex] << 24;
-							AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex++;
-							return temp;
+							temp = *(DWORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							break;
+						case 2:
+							temp = *(WORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							break;
+						case 1:
+							temp = *(BYTE*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
 					}
+					AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex += Length;
+					return temp;
 					break;
 				case IDE_COMMAND_ATAPI_PACKET:
 					if (AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex == AtaChannel[Channel].Drive[Dnum].Controller.BufferSize) {
@@ -2009,15 +2011,15 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 					if (AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex > AtaChannel[Channel].Drive[Dnum].Controller.BufferSize) {
 						return 0;
 					}
-					temp = 0;
 					switch (Length) {
 						case 4:
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 3] << 24;
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 2] << 16;
+							temp = *(DWORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							break;
 						case 2:
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex + 1] << 8;
+							temp = *(WORD*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							break;
 						case 1:
-							temp |= AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
+							temp = *(BYTE*)&AtaChannel[Channel].Drive[Dnum].Controller.Buffer[AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex];
 					}
 					AtaChannel[Channel].Drive[Dnum].Controller.BufferIndex += Length;
 					AtaChannel[Channel].Drive[Dnum].Controller.DrqIndex += Length;
@@ -2090,6 +2092,7 @@ ULONG HardDiskPortIoReadHandler(ULONG Address, ULONG Length)
 			if (!AtaChannel[Channel].Drive[Dnum].DriveType)
 				return 0;
 			PicLowerIrq(AtaChannel[Channel].Irq);
+			return AtaChannel[Channel].Drive[Dnum].Controller.Status;
 		case 0x16: //0x3f6 Status Register
 			if (!AtaChannel[Channel].Drive[Dnum].DriveType)
 				return 0;
@@ -2305,9 +2308,8 @@ VOID HardDiskInitialize()
 	//auto detect traslation
 	CmosSetRegister(0x3a, 0);
 	CmosSetRegister(0x3b, 0);
-	//0x3e8
-	//TimerRegister(MSECONDS_TO_NS(10), HardDiskSeekTimer, NULL);
-	TimerRegister(TICK_PERIOD * 5, HardDiskSeekTimer, NULL);
+	//0x3e8	
+	//TimerRegister(TICK_PERIOD * 5, HardDiskSeekTimer, NULL);
 	
 }
 

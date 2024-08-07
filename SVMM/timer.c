@@ -78,7 +78,7 @@ VOID TimerDeactivate(DWORD Index)
 	Timers[TimersIdx].Nseconds = 0;
 	Timers[TimersIdx].TimeToFire = 0;
 }
-DWORD TimerCreate(VOID(*TimerHandler)(VOID), VOID* Param)
+DWORD TimerCreate(VOID(*TimerHandler)(VOID*), VOID* Param)
 {
 	Timers[TimersIdx].Handler = TimerHandler;
 	Timers[TimersIdx].Nseconds = 0;
@@ -90,7 +90,7 @@ DWORD TimerCreate(VOID(*TimerHandler)(VOID), VOID* Param)
 	return TimersIdx++;
 }
 
-DWORD TimerRegister(DWORD Nseconds, VOID(*TimerHandler)(VOID), VOID *Param)
+DWORD TimerRegister(DWORD Nseconds, VOID(*TimerHandler)(VOID*), VOID *Param)
 {
 	Timers[TimersIdx].Handler = TimerHandler;
 	Timers[TimersIdx].Nseconds = Nseconds;
