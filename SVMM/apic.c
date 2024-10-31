@@ -456,7 +456,7 @@ static VOID ApicReset(VOID)
     /* 4 lvt entries */
     Lapic[0].ApicVersion = ((APIC_LVT_ENTRIES - 1) << 16) | LAPIC_VERSION_VALUE;
     Lapic[0].SpuriousVector = 0xff;
-    Lapic[0].MsrEnable = 0;
+    Lapic[0].MsrEnable = 1;
     Lapic[0].SoftwareEnable = 0;
 
     for (i = 0; i < NUM_LOCAL_APICS; i++) {
@@ -501,6 +501,8 @@ VOID ApicSetMsr(ULONG64 Value)
         Lapic[0].MsrEnable = 1;
     else
         Lapic[0].MsrEnable = 0;
+    
+    Lapic[0].MsrEnable = 1;
     msrs = (struct kvm_msrs*)calloc(1, sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry) * 1);
     if (!msrs) {
         fprintf(stderr, "Error in ApicSetMsr\n");
@@ -526,6 +528,7 @@ VOID ApicSetMsr(ULONG64 Value)
 VOID ApicMMIOWriteHandler(ULONG Address, BYTE* Data, ULONG Length)
 {
     ULONG Value;
+    TIMER timer;
 
     if (Length != 4 || Address & 0xf)
         return;
@@ -585,13 +588,19 @@ VOID ApicMMIOWriteHandler(ULONG Address, BYTE* Data, ULONG Length)
             break;
         case LAPIC_TIMER_INITIAL_COUNT:
             //ApicSetInitialTimerCount(Value);
-            Lapic[0].TimerInitialCountRegister = Value;
-            Lapic[0].TimerInitialLoadTime = TimerGetClockNs();
-            Lapic[0].TimerNextExpire = ApicGetNextTimerCount(Lapic[0].TimerInitialLoadTime);
-            
-            TimerActivate(Lapic[0].TimerId, Lapic[0].TimerNextExpire, 
-                !(Lapic[0].LocalVectorTable[APIC_LVT_TIMER] & LAPIC_TIMER_PERIODIC));
+            if (TimerGetState(Lapic[0].TimerId))
+                TimerDeactivate(Lapic[0].TimerId);
+            if (Value) {
+                Lapic[0].TimerInitialCountRegister = Value;
+                Lapic[0].TimerInitialLoadTime = TimerGetClockNs();
+                //Lapic[0].TimerNextExpire = ApicGetNextTimerCount(Lapic[0].TimerInitialLoadTime);
+
+                TimerActivate(Lapic[0].TimerId, 
+                    Lapic[0].TimerInitialLoadTime + (ULONG64)Lapic[0].TimerInitialCountRegister * Lapic[0].TimerDivideConfigurationRegister,
+                    !(Lapic[0].LocalVectorTable[APIC_LVT_TIMER] & LAPIC_TIMER_PERIODIC));
+            }
             break;
+        
         case LAPIC_TIMER_DIVIDE_CFG:
             // only bits 3, 1, and 0 are writable
             // move bit 3 down to bit 0
@@ -673,6 +682,10 @@ ULONG _ApicMMIOReadHandler(ULONG Address)
             return Lapic[0].LocalVectorTable[APIC_LVT_CMCI];
         case LAPIC_TIMER_INITIAL_COUNT:
             return Lapic[0].TimerInitialCountRegister;
+        case LAPIC_TIMER_CURRENT_COUNT:
+            if (TimerGetState(Lapic[0].TimerId))
+                Lapic[0].TimerInitialCountRegister -= ((ULONG)(TimerGetClockNs() - Lapic[0].TimerInitialLoadTime) / Lapic[0].TimerDivideConfigurationRegister);
+            return Lapic[0].TimerInitialCountRegister;
         case LAPIC_TIMER_DIVIDE_CFG:
             return Lapic[0].TimerDivideConfigurationRegister;
         case LAPIC_ISR1: case LAPIC_ISR2:
@@ -694,9 +707,8 @@ ULONG _ApicMMIOReadHandler(ULONG Address)
             offset = ((Address & 0xff0) - LAPIC_IRR1) >> 3;
             //(Lapic[0].InterruptRequestRegister[((Address & 0xff0) - LAPIC_IRR1) >> 4] << 0xf) |
             return ((DWORD)Lapic[0].InterruptRequestRegister[offset + 1] << 0x10) | Lapic[0].InterruptRequestRegister[offset];
-        case LAPIC_TIMER_CURRENT_COUNT:
-            return 0;
 
+        
         default:
             Lapic[0].ShadowErrorStatus |= APIC_ERR_ILLEGAL_ADDR;
     }
@@ -730,6 +742,6 @@ VOID ApicInitialize(VOID)
 {
 	memset(Lapic, '\0', sizeof(Lapic));
     MmioRegisterHandler(APIC_DEFAULT_MMIO, 0x1000, ApicMMIOWriteHandler, ApicMMIOReadHandler);
-
     ApicReset();    
+    ApicSetMsr(APIC_MSR_SW_EN);
 }

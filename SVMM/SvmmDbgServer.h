@@ -107,5 +107,5 @@ __pragma(pack(pop))
 
 VOID SvmmDbgInit(PCSTR DbgCommandLine);
 BYTE SvmmDbgLoop();
-VOID SvmmDbgSend(USHORT Type, BYTE* Buffer, SIZE_T Size);
-VOID SvmmDbgRecv(USHORT Type, BYTE* Buffer, SIZE_T Size);
+LONG SvmmDbgSend(USHORT Type, BYTE* Buffer, SIZE_T Size);
+LONG SvmmDbgRecv(USHORT Type, BYTE* Buffer, SIZE_T Size);

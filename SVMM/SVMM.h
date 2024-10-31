@@ -17,6 +17,7 @@
 #define BIOSROMSZ		(1 << 21)    /* 2M BIOS ROM @0xffe00000, must be a power of 2 */
 #define EXROMSIZE		(0x20000)    /* ROMs 0xc0000-0xdffff (area 0xe0000-0xfffff=bios mapped) */
 #define PAGE_SIZE		0x1000
+#define SMM_RAM_SIZE	0x20000
 #define ROM_SIZE		(BIOSROMSZ + EXROMSIZE)
 #define BIOS_MASK		(BIOSROMSZ - 1)
 #define EXROM_MASK		(EXROMSIZE - 1)

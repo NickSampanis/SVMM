@@ -131,7 +131,8 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 	WriteMMIOHandlerCallback MMIOWriteHandler;
 	ReadMMIOHandlerCallback MMIOReadHandler;
 	BYTE devFunc, offset, barNum, value8, oldval, bar_change;
-	ULONG i, bus;
+	ULONG i, bus, mask;
+
 
 	
 	devFunc = PCI_ADDRESS_TO_FUNCTION_DEVICE(Address);
@@ -160,13 +161,13 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 			for (i = 0; i < Length; i++) {
 				value8 = (Value >> (i * 8)) & 0xff;
 				oldval = PciDevices[bus][devFunc].conf[offset + i];
-				if (((Address + i) & 0x03) == 0) {
-					if (PciDevices[bus][devFunc].bar[barNum].type == BX_PCI_BAR_TYPE_IO) {
+				if (!i) {
+					if (PciDevices[bus][devFunc].bar[barNum].type == BX_PCI_BAR_TYPE_IO) 
 						value8 = (value8 & 0xfc) | 0x01;
-					}
-					else {
+					
+					else 
 						value8 = (value8 & 0xf0) | (oldval & 0x0f);
-					}
+					
 				}
 				bar_change |= (value8 != oldval);
 				PciDevices[bus][devFunc].conf[offset + i] = value8;
@@ -174,7 +175,6 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 			if (bar_change) {
 				if (PciDevices[bus][devFunc].bar[barNum].type == BX_PCI_BAR_TYPE_IO) {
 					if (Value == 0xffffffff) {
-						DWORD mask;
 						mask = ~(PciDevices[bus][devFunc].bar[barNum].size - 1);
 						
 						PciDevices[bus][devFunc].conf[offset] = (mask & 0xfc) | BX_PCI_BAR_TYPE_IO;
@@ -198,12 +198,17 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 							RemovePortIoHandler(PciDevices[bus][devFunc].bar[barNum].addr + i);
 						PortIoWriteHandler = PciDevices[bus][devFunc].bar[barNum].WriteHandler;
 						PortIoReadHandler = PciDevices[bus][devFunc].bar[barNum].ReadHandler;
+						if (!(Value & ~3)) {
+							PciDevices[bus][devFunc].bar[barNum].addr = 0;
+							*(ULONG *)&PciDevices[bus][devFunc].conf[offset] = BX_PCI_BAR_TYPE_IO;
+							return;
+						}
 						RegisterPortIoHandler((Value & ~3) + i, PortIoWriteHandler, PortIoReadHandler);
 					}
 				}
 				else {
 					if (Value == 0xffffffff) {
-						DWORD mask;
+						
 						mask = ~(PciDevices[bus][devFunc].bar[barNum].size - 1);
 
 						PciDevices[bus][devFunc].conf[offset + 3] &= (mask & 0xfc);
@@ -218,6 +223,11 @@ VOID PciWriteConfHandler(ULONG Address, ULONG Value, ULONG Length)
 							MmioRemoveHandler(PciDevices[bus][devFunc].bar[barNum].addr + i);
 						MMIOWriteHandler = PciDevices[bus][devFunc].bar[barNum].WriteHandler;
 						MMIOReadHandler = PciDevices[bus][devFunc].bar[barNum].ReadHandler;
+						if (!(Value & ~3)) {
+							PciDevices[bus][devFunc].bar[barNum].addr = 0;
+							*(ULONG*)&PciDevices[bus][devFunc].conf[offset] = 0;
+							return;
+						}
 						MmioRegisterHandler((Value & ~3) + i, 0x1000, MMIOWriteHandler, MMIOReadHandler);
 					}
 				}
@@ -282,7 +292,7 @@ ULONG PciReadConfHandler(ULONG PciAddress, ULONG Length)
 }
 
 VOID PciInitConfig(ULONG PciAddress, USHORT Vendor, USHORT Device, BYTE Revision,
-	ULONG Class, BYTE ProgIf, BYTE Type, BYTE Interrupt)
+	ULONG Class, BYTE ProgIf, BYTE Type, BYTE InterruptPin)
 {
 	ULONG devFunc, bus;
 
@@ -297,7 +307,7 @@ VOID PciInitConfig(ULONG PciAddress, USHORT Vendor, USHORT Device, BYTE Revision
 		fprintf(stderr, "Error in InitPciConfig, pci device not initialized!\n");
 		exit(-1);
 	}
-
+	memset(PciDevices[bus][devFunc].conf, 0, 0xff);
 	//memset(PciDevices[bus][devFunc].conf, 0xff, sizeof(PciDevices[bus][devFunc].conf));
 	PciDevices[bus][devFunc].conf[PCI_CONF_VEND_1] = (BYTE)(Vendor & 0xff);
 	PciDevices[bus][devFunc].conf[PCI_CONF_VEND_2] = (BYTE)(Vendor >> 8);
@@ -310,8 +320,8 @@ VOID PciInitConfig(ULONG PciAddress, USHORT Vendor, USHORT Device, BYTE Revision
 	PciDevices[bus][devFunc].conf[PCI_CONF_CLASS] = (BYTE)((Class >> 8) & 0xff);
 	//PciDevices[bus][devFunc].conf[0x0b] = (BYTE)((Class >> 16) & 0xff);
 	PciDevices[bus][devFunc].conf[PCI_CONF_HDR_TYPE] = Type;
-	PciDevices[bus][devFunc].conf[PCI_CONF_IRQ_LINE] = Interrupt;
-	PciDevices[bus][devFunc].conf[PCI_CONF_IRQ_PIN] = 1;
+	//PciDevices[bus][devFunc].conf[PCI_CONF_IRQ_LINE] = Interrupt;
+	PciDevices[bus][devFunc].conf[PCI_CONF_IRQ_PIN] = InterruptPin;
 
 }
 
@@ -355,7 +365,7 @@ void PciSetBarMmio(ULONG PciAddress, BYTE BarNumber, ULONG BarAddress, DWORD Siz
 		PciDevices[bus][devFunc].bar[BarNumber].ReadHandler = ReadMMIOHandler;
 		PciDevices[bus][devFunc].bar[BarNumber].WriteHandler = WriteMMIOHandler;
 		PciDevices[bus][devFunc].bar[BarNumber].addr = BarAddress;
-		*(ULONG*)&PciDevices[bus][devFunc].conf[0x10 + BarNumber * 4] = BarAddress | 0x02;
+		*(ULONG*)&PciDevices[bus][devFunc].conf[0x10 + BarNumber * 4] = BarAddress;
 	}
 }
 
@@ -381,7 +391,7 @@ NTSTATUS MmioRegisterHandler(ULONG Address, ULONG Size, WriteMMIOHandlerCallback
 		MmioWriteHandlers[index] = WriteHandler;
 		MmioReadHandlers[index] = ReadHandler;
 		index++;
-	} while (index << 16 < Address + Size);
+	} while ((ULONG64)index << 16 < (ULONG64)Address + Size);
 	
 	gvm_register_mmio(Address, Size);
 

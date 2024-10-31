@@ -3,12 +3,29 @@
 #include "gvm.h"
 #include "timer.h"
 #include "cmos.h"
+#include "apic.h"
 
 struct ACPI Acpi;
 extern PCI PciDevices[MAX_BUSES][MAX_PCI_DEVICES_PER_BUS];
 
 #define ACPI_PM_PORT_MASK ((1 << 0) | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 9) | (1 << 5) | (1 << 11) | (1 << 13) | (1 << 14) | (1 << 15))
 #define ACPI_SM_PORT_MASK ((1 << 1) | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 9) | (1 << 5) | (1 << 11) | (1 << 13) | (1 << 14) | (1 << 15))
+#define ACPI_ENABLE		0xf1
+#define ACPI_DISABLE	0xf0
+
+VOID AcpiGenerateAcpi(BYTE Value)
+{
+	ULONG  devFunc;
+
+	if (Value == ACPI_ENABLE) 
+		Acpi.PmControl |= SCI_EN;
+	else if (Value == ACPI_DISABLE) 
+		Acpi.PmControl &= ~SCI_EN;
+	devFunc = BX_PCI_DEVICE(1, 3);
+	if (PciDevices[0][devFunc].conf[0x5b] & 2)
+		ApicBusDeliverInterrupt(0, 0, 0, DELIVERY_MODE_SMI, 1, 1);
+	
+}
 
 USHORT AcpiGetPmStatus(void)
 {
@@ -23,14 +40,14 @@ USHORT AcpiGetPmStatus(void)
 	return Status;
 }
 
-void AcpiPmUpdateSci(void)
+VOID AcpiPmUpdateSci(void)
 {
 	ULONG64 ExpireTime;
 	ULONG  devFunc, PciAddress;
 	USHORT Status;
 	BYTE SciLevel;
 
-	devFunc = BX_PCI_DEVICE(3, 0);
+	devFunc = BX_PCI_DEVICE(1, 3);
 	PciAddress = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
 	Status = AcpiGetPmStatus();
 	SciLevel = (Status & Acpi.PmStatus) & (RTC_EN | PWRBTN_EN | GBL_EN | TMROF_EN);
@@ -67,11 +84,11 @@ static VOID AcpiPciConfWriteHandler(PCI* Pci, ULONG64 Address, ULONG Value, ULON
 		case 0x06: // disallowing write to status lo-byte 
 			break;
 		case 0x40:
-			PciWriteConfHandler(PCI_DEVFUNC_TO_ADDRESS(3, 0) | PCI_CONF_BAR0, Value & ~1, 4);
+			PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, BX_PCI_DEVICE(1, 3), PCI_CONF_BAR0), Value & ~1, 4);
 			Acpi.PmBase = Value & ~1;
 			break;
 		case 0x90:
-			PciWriteConfHandler(PCI_DEVFUNC_TO_ADDRESS(3, 0) | PCI_CONF_BAR1, Value & ~1, 4);
+			PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, BX_PCI_DEVICE(1, 3), PCI_CONF_BAR1), Value & ~1, 4);
 			Acpi.SmBase = Value & ~1;
 			break;
 		default:
@@ -91,7 +108,7 @@ VOID AcpiWritePortIoHandler(ULONG Address, ULONG Value, ULONG Length)
 	ULONG  devFunc, reg;
 	ULONG64 tmp;
 
-	devFunc = BX_PCI_DEVICE(3, 0);
+	devFunc = BX_PCI_DEVICE(1, 3);
 	reg = Address & 0x3f;
 	if ((Address & 0xffc0) == Acpi.PmBase) {
 		if (!(PciDevices[0][devFunc].conf[0x80] & 1))
@@ -134,15 +151,15 @@ VOID AcpiWritePortIoHandler(ULONG Address, ULONG Value, ULONG Length)
 			case 0x32: // GPIREG
 				break;
 			default:
-				if (Address >= ACPI_PM_REGISTERS_SIZE - 4)
+				if (reg > ACPI_PM_REGISTERS_SIZE - Length)
 					return;
-				Acpi.PmRegisters[reg] = Value;
-				if (Length >= 2 && reg < ACPI_PM_REGISTERS_SIZE - 1) {
-					Acpi.PmRegisters[reg + 1] = (Value >> 8);
-				}
-				if (Length == 4 && reg < ACPI_PM_REGISTERS_SIZE - 3) {
-					Acpi.PmRegisters[reg + 2] = (Value >> 16);
-					Acpi.PmRegisters[reg + 3] = (Value >> 24);
+				switch (Length) {
+					case 1:
+						*(BYTE*)&Acpi.PmRegisters[reg] = Value;
+					case 2:
+						*(USHORT*)&Acpi.PmRegisters[reg] = Value;
+					case 4:
+						*(ULONG*)&Acpi.PmRegisters[reg] = Value;
 				}
 				break;
 		}
@@ -184,7 +201,9 @@ ULONG AcpiReadPortIoHandler(ULONG Address, ULONG Length)
 	ULONG64 value;
 
 	reg = Address & 0x3f;
-	devFunc = BX_PCI_DEVICE(3, 0);
+	if (reg > ACPI_PM_REGISTERS_SIZE - Length)
+		return 0;
+	devFunc = BX_PCI_DEVICE(1, 3);
 	if ((Address & 0xffc0) == Acpi.PmBase) {
 		if (!(PciDevices[0][devFunc].conf[0x80] & 1))
 			return;
@@ -245,12 +264,12 @@ VOID AcpiInitialize()
 	ULONG  devFunc, PciAddress;
 
 	memset(&Acpi, '\0', sizeof(Acpi));
-	devFunc = BX_PCI_DEVICE(3, 0);
+	devFunc = BX_PCI_DEVICE(1, 3);
 	PciAddress = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
 	PciRegisterConfigHandler(PciAddress, AcpiPciConfWriteHandler, AcpiPciConfReadHandler);
 	PciInitConfig(PciAddress, 0x8086, PCI_DEVICE_ID_INTEL_82371AB_3, 0x03, 0x0680, 0x00, PCI_HDR_TYPE_DEVICE, PCI_INTA);
-	PciSetBarIo(PciAddress, 0, 0, 16, AcpiReadPortIoHandler, AcpiWritePortIoHandler, ACPI_PM_PORT_MASK);
-	PciSetBarIo(PciAddress, 1, 0, 64, AcpiReadPortIoHandler, AcpiWritePortIoHandler, ACPI_SM_PORT_MASK);
+	PciSetBarIo(PciAddress, 0, 0, 16, AcpiReadPortIoHandler, AcpiWritePortIoHandler, 0);
+	PciSetBarIo(PciAddress, 1, 0, 64, AcpiReadPortIoHandler, AcpiWritePortIoHandler, 0);
 	//RegisterPortIoHandler(ACPI_DBG_IO_ADDR, AcpiWritePortIoHandler, AcpiReadPortIoHandler);
 	PciDevices[0][devFunc].conf[0x06] = 0x80; // status_devsel_medium
 	PciDevices[0][devFunc].conf[0x07] = 0x02;

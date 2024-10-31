@@ -1,6 +1,7 @@
 #include "piix3.h"
 #include "pci.h"
 #include "pic.h"
+#include "acpi.h"
 
 static struct piix3 piix3;
 
@@ -84,6 +85,7 @@ static VOID Piix3PortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 		case 0xb2:
 			//DEV_acpi_generate_smi((Bit8u)value);
 			piix3.APMControl = Value & 0xff;
+			AcpiGenerateAcpi(piix3.APMControl);
 			break;
 		case 0xb3:
 			piix3.APMStatus = Value & 0xff;
@@ -112,7 +114,20 @@ static VOID Piix3PortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 
 static ULONG Piix3PortIoReadHandler(ULONG64 Address, ULONG Length)
 {
+	switch (Address) {
+		case 0xb2:
+			return piix3.APMControl;
+		case 0xb3:
+			return piix3.APMStatus;
+		case 0x4d0:
+			return piix3.edgeLevelTrigger1;
+		case 0x4d1:
+			return piix3.edgeLevelTrigger2;
+		case 0xcf9:
+			return piix3.pciReset;
 
+	}
+	return 0;
 }
 
 VOID Piix3RegisterIrq(PCI* Pci, ULONG Address, BYTE irq)
@@ -159,6 +174,22 @@ VOID Piix3SetIrq(PCI* Pci, BYTE devFunc, BYTE line, BYTE level)
 	}
 
 }
+VOID Piix3Reset()
+{
+	USHORT devFunc;
+	devFunc = BX_PCI_DEVICE(1, 0);
+
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x07), 0x02, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x4c), 0x4d, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x4e), 0x03, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x69), 0x02, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x70), 0x80, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x76), 0x0c, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x77), 0x0c, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x78), 0x02, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xa0), 0x08, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xa8), 0x0f, 1);
+}
 
 VOID Piix3Initialize()
 {
@@ -170,7 +201,7 @@ VOID Piix3Initialize()
 	Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
 	PciRegisterConfigHandler(Address, Piix3PciConfWriteHandler, Piix3fxPciConfReadHandler);
 	PciInitConfig(Address, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_0, 0x00, 0x0601, 0x00, 0x80, 0);
-
+	Piix3Reset();
 	RegisterPortIoHandler(0xb2, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);
 	RegisterPortIoHandler(0xb3, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);
 	RegisterPortIoHandler(0x4d0, (WritePortIoHandlerCallback)Piix3PortIoWriteHandler, (ReadPortIoHandlerCallback)Piix3PortIoReadHandler);

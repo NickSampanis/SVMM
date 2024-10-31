@@ -46,4 +46,4 @@ struct ACPI {
 }; 
 
 VOID AcpiInitialize();
-
+VOID AcpiGenerateAcpi(BYTE Value);

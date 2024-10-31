@@ -149,6 +149,7 @@
     <ClCompile Include="cdrom.c" />
     <ClCompile Include="cmos.c" />
     <ClCompile Include="dma.c" />
+    <ClCompile Include="flash.c" />
     <ClCompile Include="gui.c" />
     <ClCompile Include="gvm.c" />
     <ClCompile Include="harddisk.c" />
@@ -163,6 +164,7 @@
     <ClCompile Include="pci.c" />
     <ClCompile Include="pic.c" />
     <ClCompile Include="pit.c" />
+    <ClCompile Include="scancodes.c" />
     <ClCompile Include="serial.c" />
     <ClCompile Include="sparse.c" />
     <ClCompile Include="SVMM.c" />
@@ -183,6 +185,7 @@
     <ClInclude Include="cmos.h" />
     <ClInclude Include="dma.h" />
     <ClInclude Include="exdi.h" />
+    <ClInclude Include="flash.h" />
     <ClInclude Include="gui.h" />
     <ClInclude Include="gvm.h" />
     <ClInclude Include="gvm_types.h" />
@@ -200,6 +203,7 @@
     <ClInclude Include="pci.h" />
     <ClInclude Include="pic.h" />
     <ClInclude Include="pit.h" />
+    <ClInclude Include="scancodes.h" />
     <ClInclude Include="serial.h" />
     <ClInclude Include="sparse.h" />
     <ClInclude Include="SVMM.h" />

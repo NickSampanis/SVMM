@@ -43,6 +43,7 @@ ULONG64 TimerGetElapsed(DWORD Index);
 ULONG64 TimerGetTotalTicks(VOID);
 ULONG64 TimerGetTotalUseconds(VOID);
 ULONG64 TimerGetClockNs(void);
+BYTE TimerGetState(DWORD Index);
 ULONG64 muldiv64(ULONG64 a, ULONG b, ULONG c);
 
 

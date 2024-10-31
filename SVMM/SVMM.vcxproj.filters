@@ -111,6 +111,12 @@
     <ClCompile Include="hpet.c">
       <Filter>Source Files\vdevs</Filter>
     </ClCompile>
+    <ClCompile Include="scancodes.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="flash.c">
+      <Filter>Source Files\vdevs</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="haxm.h">
@@ -216,6 +222,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="hpet.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="scancodes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="flash.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

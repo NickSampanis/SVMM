@@ -143,5 +143,6 @@ ULONG Ps2TimerPeriodic(DWORD Seconds);
 VOID Ps2QueueByte(BYTE Data, BYTE Device);
 VOID Ps2ActivateTimer(VOID);
 VOID Ps2DeactivateTimer(VOID);
+VOID Ps2GenerateScancode(ULONG Key);
 
 #endif

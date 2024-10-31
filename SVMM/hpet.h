@@ -61,3 +61,5 @@ typedef struct _HPET {
 	ULONG64 ReferenceValue;
 	HPET_TIMER_BLOCK Timer[32];
 } HPET;
+
+VOID HpetInitialize();

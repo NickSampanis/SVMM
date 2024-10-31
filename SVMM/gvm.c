@@ -2,8 +2,7 @@
 #include "haxm.h"
 #include "timer.h"
 #include <stdio.h>
-
-#define PAGE_SIZE 0x1000
+#include "SVMM.h"
 
 //GLOBALS
 HANDLE hGvmDev, hGvmCpu, hGvmVm;
@@ -15,6 +14,9 @@ struct kvm_msr_list* msr_list;
 struct kvm_msrs* msrs;
 
 DWORD mem_slots_num;
+DWORD freeslots;
+
+extern BYTE* Ram;
 
 //BX_MEM_C::getHostMemAddr
 // 0x00000 - 0x7ffff    DOS area (512K)
@@ -72,9 +74,11 @@ int gvm_init(void* ram, size_t ram_size)
         goto error;
     }
     
-    for (i = 0; i < 80; i++) {
+    for (i = 0; i < GVM_MAX_CPUID_ENTRIES; i++) {
         printf("cpuid function 0x%x eax = 0x%x ebx = 0x%x ecx = 0x%x edx = 0x%x\n", cpuids->entries[i].function, cpuids->entries[i].eax, cpuids->entries[i].ebx, cpuids->entries[i].ecx, cpuids->entries[i].edx);
-
+        //to avoid windows bsod, we should set edx accordingly to disable rdtsc
+        if (cpuids->entries[i].function == 0x80000001)
+            cpuids->entries[i].edx &= ~(1UL << 27);
         //if (cpuids->entries[i].function == 1 && cpuids->entries[i].edx & 0x200)
           //  cpuids->entries[i].edx &= ~(1 << 9); //disable apic
 
@@ -153,7 +157,7 @@ int gvm_init(void* ram, size_t ram_size)
     memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
     kvm_userspace_mem.guest_phys_addr = 0;
     kvm_userspace_mem.userspace_addr = (uint64_t)ram;
-    kvm_userspace_mem.memory_size = 0xa0000;
+    kvm_userspace_mem.memory_size = 0x30000;
     kvm_userspace_mem.slot = 0;
     kvm_userspace_mem.flags = 0;
     ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
@@ -165,12 +169,10 @@ int gvm_init(void* ram, size_t ram_size)
     }
     mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
 
-    printf("memory starts 0x%llx\n", (ULONG64)ram);
-    //0xc0000-0xe0000 points to vga rom
     memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
-    kvm_userspace_mem.guest_phys_addr = 0xa0000;
-    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xa0000);
-    kvm_userspace_mem.memory_size = 0x40000;
+    kvm_userspace_mem.guest_phys_addr = 0x30000;
+    kvm_userspace_mem.userspace_addr = (uint64_t)ram + 0x30000;
+    kvm_userspace_mem.memory_size = 0x20000;
     kvm_userspace_mem.slot = 1;
     kvm_userspace_mem.flags = 0;
     ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
@@ -179,15 +181,13 @@ int gvm_init(void* ram, size_t ram_size)
     if (!ret) {
         perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
         goto error;
-    
     }
     mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
 
-    //0xe0000-0x100000 points to bios rom
     memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
-    kvm_userspace_mem.guest_phys_addr = 0xe0000;
-    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xe0000);
-    kvm_userspace_mem.memory_size = 0x20000; //0x20000;
+    kvm_userspace_mem.guest_phys_addr = 0x50000;
+    kvm_userspace_mem.userspace_addr = (uint64_t)ram + 0x50000;
+    kvm_userspace_mem.memory_size = 0x50000;
     kvm_userspace_mem.slot = 2;
     kvm_userspace_mem.flags = 0;
     ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
@@ -199,13 +199,48 @@ int gvm_init(void* ram, size_t ram_size)
     }
     mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
 
-    //all the ram 0x100000-0xfffe0000
+    printf("memory starts 0x%llx\n", (ULONG64)ram);
+    
+    //0xa0000-0xbfff vga mmio, can be changed so that 0xa0000-0xbfff will point to SMM RAM
     memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
-    kvm_userspace_mem.guest_phys_addr = 0x100000;
-    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + 0x100000);
-    //kvm_userspace_mem.memory_size = 1024 * 1024 * 256 - 0x100000;
-    kvm_userspace_mem.memory_size = ram_size - 0x100000;
+    kvm_userspace_mem.guest_phys_addr = 0xa0000;
+    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xa0000);
+    kvm_userspace_mem.memory_size = 0x20000;
     kvm_userspace_mem.slot = 3;
+    kvm_userspace_mem.flags = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+        goto error;
+    
+    }
+    mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
+
+    //0xc0000-0xe0000 points to vga rom
+    memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
+    kvm_userspace_mem.guest_phys_addr = 0xc0000;
+    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xc0000);
+    kvm_userspace_mem.memory_size = 0x20000;
+    kvm_userspace_mem.slot = 4;
+    kvm_userspace_mem.flags = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+        goto error;
+
+    }
+    mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
+
+    //0xe0000-0x100000 points to bios rom
+    memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
+    kvm_userspace_mem.guest_phys_addr = 0xe0000;
+    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xe0000);
+    kvm_userspace_mem.memory_size = 0x20000;
+    kvm_userspace_mem.slot = 5;
     kvm_userspace_mem.flags = 0;
     ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
         &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
@@ -216,12 +251,13 @@ int gvm_init(void* ram, size_t ram_size)
     }
     mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
 
-    //0xfffe0000-0x10000000 points to bios rom
+    //all the ram 0x100000-40000000 0xfffe0000  0xfec00000 0xfed00000 0xfee00000 
     memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
-    kvm_userspace_mem.guest_phys_addr = 0xfffe0000;
-    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xe0000);
-    kvm_userspace_mem.memory_size = 0x20000;
-    kvm_userspace_mem.slot = 4;
+    kvm_userspace_mem.guest_phys_addr = 0x100000;
+    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + 0x100000);
+    //kvm_userspace_mem.memory_size = 1024 * 1024 * 256 - 0x100000;
+    kvm_userspace_mem.memory_size = ram_size - 0x100000;
+    kvm_userspace_mem.slot = 6;
     kvm_userspace_mem.flags = 0;
     ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
         &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
@@ -231,7 +267,54 @@ int gvm_init(void* ram, size_t ram_size)
         goto error;
     }
     mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
-    mem_slots_num = 5;
+    
+    //0xfffe0000-0x10000000 points to bios rom
+    memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
+    kvm_userspace_mem.guest_phys_addr = 0xfffe0000;
+    kvm_userspace_mem.userspace_addr = ((uint64_t)ram + ram_size + 0xe0000);
+    kvm_userspace_mem.memory_size = 0x20000;
+    kvm_userspace_mem.slot = 7;
+    kvm_userspace_mem.flags = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+        goto error;
+    }
+    
+    mem_slots[kvm_userspace_mem.slot] = kvm_userspace_mem;
+    
+    mem_slots_num = kvm_userspace_mem.slot + 1;
+    freeslots = mem_slots_num;
+    //SMM to address space 1, has 0xa0000 always pointing to SMM RAM
+    memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
+    kvm_userspace_mem.guest_phys_addr = 0xa0000;
+    kvm_userspace_mem.userspace_addr = (uint64_t)ram + ram_size + ROM_SIZE + PAGE_SIZE;
+    kvm_userspace_mem.memory_size = 0x20000;
+    kvm_userspace_mem.slot = 0 | (1 << 16);
+    kvm_userspace_mem.flags = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl 0xa0000 GVM_SET_USER_MEMORY_REGION");
+        exit(-1);
+    }
+    //SMM to address space 1, has 0x30000 pointing to ram
+    memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
+    kvm_userspace_mem.guest_phys_addr = 0x30000;
+    kvm_userspace_mem.userspace_addr = (uint64_t)ram + ram_size + ROM_SIZE + PAGE_SIZE;
+    kvm_userspace_mem.memory_size = 0x20000;
+    kvm_userspace_mem.slot = 1 | (1 << 16);
+    kvm_userspace_mem.flags = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl 0x30000 GVM_SET_USER_MEMORY_REGION");
+        exit(-1);
+    }
 
 
     //GVM_VCPU_MMAP
@@ -290,12 +373,100 @@ error:
     exit(-1);
 }
 
+void gvm_unmap_memory(unsigned int address, size_t size)
+{
+    LONG left, right;
+    ULONG i, bytes, memSize;
+    BOOL ret;
+
+    left = 0;
+    right = mem_slots_num;
+    i = 0;
+    while (left <= right) {
+        i = (left + right) / 2;
+        if (mem_slots[i].guest_phys_addr + mem_slots[i].memory_size <= address)
+            left = i + 1;
+        else if (mem_slots[i].guest_phys_addr <= address && address + size <= mem_slots[i].guest_phys_addr + mem_slots[i].memory_size)
+            break;
+        else
+            right = i - 1;
+    }
+    if (mem_slots[i].guest_phys_addr > address || mem_slots[i].guest_phys_addr + mem_slots[i].memory_size < address)
+        return;
+    memSize = mem_slots[i].memory_size;
+    mem_slots[i].memory_size = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+        &bytes, (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+        exit(-1);
+    }
+    mem_slots[i].memory_size = memSize;
+
+
+}
+
+void gvm_map_memory(unsigned int address, unsigned int size, uint64_t ram)
+{
+    LONG left, right;
+    ULONG i, bytes, memSize;
+    BOOL ret;
+
+    left = 0;
+    right = mem_slots_num;
+    i = 0;
+    while (left <= right) {
+        i = (left + right) / 2;
+        if (mem_slots[i].guest_phys_addr + mem_slots[i].memory_size <= address)
+            left = i + 1;
+        else if (mem_slots[i].guest_phys_addr <= address && address + size <= mem_slots[i].guest_phys_addr + mem_slots[i].memory_size)
+            break;
+        else
+            right = i - 1;
+    }
+    /*
+    //unmap
+    memSize = mem_slots[i].memory_size;
+    mem_slots[i].memory_size = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+        &bytes, (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+        exit(-1);
+    }
+    */
+    //map
+    //mem_slots[i].memory_size = memSize;
+    mem_slots[i].userspace_addr = ram;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+        &bytes, (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+        exit(-1);
+    }
+
+}
+
 //calling GVM_SET_USER_MEMORY_REGION with mem_slots[i].memory_size == 0, makes mem_slots[i].guest_phys_addr an MMIO
 void gvm_register_mmio(unsigned int address, size_t size)
 {
+    gvm_unmap_memory(address, size);
+}
+
+void gvm_remove_mmio(unsigned int address, size_t size)
+{
+    gvm_map_memory(address, size, (ULONG64)Ram + address);
+}
+
+/*
+int gvm_unmap_memory(unsigned int address, size_t size)
+{
     struct kvm_userspace_memory_region newBlock;
     unsigned long memSize;
-    unsigned int i, j;
+    unsigned int i, j, found;
     BOOL ret;
     DWORD bytes;
 
@@ -314,7 +485,7 @@ void gvm_register_mmio(unsigned int address, size_t size)
         else
             right = i - 1;
     }
-    /* if its the start of slot  */
+    // if its the start of slot  
     if (mem_slots[i].guest_phys_addr == address) {
         memSize = mem_slots[i].memory_size;
         mem_slots[i].memory_size = 0;
@@ -325,19 +496,27 @@ void gvm_register_mmio(unsigned int address, size_t size)
             perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
             exit(-1);
         }
-        mem_slots[i].guest_phys_addr = address + size;
-        mem_slots[i].userspace_addr += size;
-        mem_slots[i].memory_size = memSize - size;
-        ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
-            &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
-            &bytes, (LPOVERLAPPED)NULL);
-        if (!ret) {
-            perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
-            exit(-1);
+        if (memSize - size) {
+            mem_slots[i].guest_phys_addr = address + size;
+            mem_slots[i].userspace_addr += size;
+            mem_slots[i].memory_size = memSize - size;
+            ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+                &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+                &bytes, (LPOVERLAPPED)NULL);
+            if (!ret) {
+                perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+                exit(-1);
+            }
+        }
+        else {
+            // remove the current block, keep the others 
+            for (j = i; j < mem_slots_num - 1; j++)
+                mem_slots[j] = mem_slots[j + 1];
+            mem_slots_num--;
         }
     }
-    else if  (mem_slots[i].guest_phys_addr <= address && address + size <= mem_slots[i].guest_phys_addr + mem_slots[i].memory_size) {
-        /* if its in the middle, we need to split it, in two blocks */
+    else if (mem_slots[i].guest_phys_addr <= address && address + size <= mem_slots[i].guest_phys_addr + mem_slots[i].memory_size) {
+        // if its in the middle, we need to split it, in two blocks 
         memSize = mem_slots[i].memory_size;
         mem_slots[i].memory_size = 0;
         ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
@@ -348,10 +527,10 @@ void gvm_register_mmio(unsigned int address, size_t size)
             exit(-1);
         }
 
-        /* first block */
+        // first block
         newBlock.memory_size = memSize - (address - mem_slots[i].guest_phys_addr + size);
         mem_slots[i].memory_size = address - mem_slots[i].guest_phys_addr;
-        
+
         ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
             &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
             &bytes, (LPOVERLAPPED)NULL);
@@ -360,10 +539,10 @@ void gvm_register_mmio(unsigned int address, size_t size)
             exit(-1);
         }
 
-        /* new block */
+        // new block 
         newBlock.guest_phys_addr = address + size;
         newBlock.userspace_addr = mem_slots[i].userspace_addr + mem_slots[i].memory_size;
-        newBlock.slot = mem_slots_num;
+        newBlock.slot = mem_slots_num + 1;
         newBlock.flags = 0;
         ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
             &newBlock, sizeof(struct kvm_userspace_memory_region), NULL, 0,
@@ -372,14 +551,116 @@ void gvm_register_mmio(unsigned int address, size_t size)
             perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
             exit(-1);
         }
-        /* move the  new block next to the one we split, move all the others one step */
-        for (j = mem_slots_num; j >= i; j--)
+        // move the  new block next to the one we split, move all the others one step 
+        for (j = mem_slots_num + 1; j > i; j--)
             mem_slots[j] = mem_slots[j - 1];
         mem_slots[i + 1] = newBlock;
         mem_slots_num++;
-    }
-    /* else the address doesn't overlap, so do nothing */
 
+    }
+    else {
+        // else the address doesn't overlap, so do nothing 
+        return i;
+    }
+    found = i;
+    
+    //remove all to clear tlbs?
+    for (i = 0; i < mem_slots_num; i++) {
+        memSize = mem_slots[i].memory_size;
+        mem_slots[i].memory_size = 0;
+        //remove
+        ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+            &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+            &bytes, (LPOVERLAPPED)NULL);
+        if (!ret) {
+            perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+            exit(-1);
+        }
+        //add
+        mem_slots[i].memory_size = memSize;
+    }
+    //add them all with proper slots
+    for (i = 0; i < mem_slots_num; i++) {
+
+        mem_slots[i].slot = i;
+        ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+            &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+            &bytes, (LPOVERLAPPED)NULL);
+        if (!ret) {
+            perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+            exit(-1);
+        }
+    }
+    
+    
+    return found;
+
+}
+
+void gvm_map_memory(unsigned int address, unsigned int size, uint64_t ram)
+{
+    int i, j;
+    BOOL ret;
+    ULONG bytes;
+    unsigned long memSize;
+    struct kvm_userspace_memory_region kvm_userspace_mem;
+    
+
+
+    i = gvm_unmap_memory(address, size);
+
+    memset(&kvm_userspace_mem, '\0', sizeof(kvm_userspace_mem));
+    kvm_userspace_mem.guest_phys_addr = address;
+    kvm_userspace_mem.userspace_addr = (uint64_t)ram;
+    kvm_userspace_mem.memory_size = size;
+    kvm_userspace_mem.slot = mem_slots_num + 1;
+    //kvm_userspace_mem.slot = freeslots + 1;
+    kvm_userspace_mem.flags = 0;
+    ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+        &kvm_userspace_mem, sizeof(kvm_userspace_mem), NULL, 0, &bytes,
+        (LPOVERLAPPED)NULL);
+    if (!ret) {
+        perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+        exit(-1);
+    }
+    for (j = mem_slots_num + 1; j > i; j--)
+        mem_slots[j] = mem_slots[j - 1];
+    mem_slots[i] = kvm_userspace_mem;
+    mem_slots_num++;
+    
+    //remove all to clear tlbs?
+    for (i = 0; i < mem_slots_num; i++) {
+        memSize = mem_slots[i].memory_size;
+        mem_slots[i].memory_size = 0;
+        //remove
+        ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+            &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+            &bytes, (LPOVERLAPPED)NULL);
+        if (!ret) {
+            perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+            exit(-1);
+        }
+        //add
+        mem_slots[i].memory_size = memSize;
+    }
+    //add them all with proper slots
+    for (i = 0; i < mem_slots_num; i++) {
+
+        mem_slots[i].slot = i;
+        ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
+            &mem_slots[i], sizeof(struct kvm_userspace_memory_region), NULL, 0,
+            &bytes, (LPOVERLAPPED)NULL);
+        if (!ret) {
+            perror("Driver GVM DeviceIoControl GVM_SET_USER_MEMORY_REGION");
+            exit(-1);
+        }
+    }
+}
+
+//calling GVM_SET_USER_MEMORY_REGION with mem_slots[i].memory_size == 0, makes mem_slots[i].guest_phys_addr an MMIO
+void gvm_register_mmio(unsigned int address, size_t size)
+{
+    gvm_unmap_memory(address,  size);
 }
 
 void gvm_remove_mmio(unsigned int address, size_t size)
@@ -390,9 +671,9 @@ void gvm_remove_mmio(unsigned int address, size_t size)
     DWORD bytes;
 
     for (i = 0; i < mem_slots_num; i++) {
-        /* 1st case mmio address within one block */
+        // 1st case mmio address within one block 
         if (mem_slots[i].guest_phys_addr >= address && address + size <= mem_slots[i].guest_phys_addr + mem_slots[i].memory_size) {
-            /* if its the start of slot  */
+            // if its the start of slot  
             memSize = mem_slots[i].memory_size;
             mem_slots[i].memory_size = 0;
             ret = DeviceIoControl(hGvmVm, GVM_SET_USER_MEMORY_REGION,
@@ -418,6 +699,7 @@ void gvm_remove_mmio(unsigned int address, size_t size)
         }
     }
 }
+*/
 
 static inline gvm_set_segment(struct kvm_segment *kvm_seg, struct segment_desc_t hax_seg)
 {

@@ -4,11 +4,12 @@
 #include "timer.h"
 #include "pic.h"
 #include "cmos.h"
+#include "scancodes.h"
 
 
 PS2 Ps2;
-
-
+extern struct SCANCODE scancodes[BX_KEY_NBKEYS][3];
+extern unsigned char translation8042[256];
 
 VOID Ps2EnableMouseClock(BYTE Value)
 {
@@ -25,22 +26,23 @@ VOID Ps2EnableMouseClock(BYTE Value)
 	}
 }
 
-VOID Ps2EnableKeyboardClock(BYTE Value)
+VOID Ps2EnableKeyboardClock(BYTE Enable)
 {
-	if (!Value) {
-		Ps2.Keyboard.KeyboardClockEnabled = 0;
-	}
-	else {
+	if (Enable) {
 		if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && !Ps2.Keyboard.KeyboardClockEnabled) {
 			if (!Ps2.TimerPending)
 				Ps2.TimerPending = 1;
-			TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+			//TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+			//TimerActivate(Ps2.TimerId, TICK_PERIOD * 1, 1);
 		}
 		Ps2.Keyboard.KeyboardClockEnabled = 1;
 	}
+	else
+		Ps2.Keyboard.KeyboardClockEnabled = 0;
 }
 
 
+//controller_enQ
 VOID Ps2QueueByte(BYTE Data, BYTE Device)
 {
 	if (Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) {
@@ -86,7 +88,9 @@ ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 				PicLowerIrq(12);
 				if (!Ps2.TimerPending)
 					Ps2.TimerPending = 1;
-				TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+				//TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+				//TimerActivate(Ps2.TimerId, TICK_PERIOD * 1, 1);
+				
 			}
 			else if (Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) {
 				Ret = Ps2.KeyboardBuffer;
@@ -103,7 +107,8 @@ ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 				PicLowerIrq(1);
 				if (!Ps2.TimerPending)
 					Ps2.TimerPending = 1;
-				TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+				//TimerActivate(Ps2.TimerId, TimerGetClockNs() + NANOSECONDS_PER_MSECOND * 10, 1);
+				//TimerActivate(Ps2.TimerId, TICK_PERIOD * 1, 1);
 
 			}
 			else {
@@ -120,7 +125,7 @@ ULONG Ps2PortIoReadHandler(ULONG64 Address, ULONG Length)
 }
 
 
-
+//kbd_enQ
 /* Write to Mouse Memory */
 VOID Ps2WriteMouseMemory(BYTE ScanCode)
 {
@@ -129,7 +134,13 @@ VOID Ps2WriteMouseMemory(BYTE ScanCode)
 		exit(-1);
 	}
 	Ps2.Mouse.MouseMemory[Ps2.Mouse.MouseMemoryIndex++] = ScanCode;
-	Ps2EnableKeyboardClock(1);
+
+	if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && Ps2.Keyboard.KeyboardClockEnabled
+		&& !Ps2.TimerPending) {
+		Ps2.TimerPending = 1;
+		//TimerActivate(Ps2.TimerId, TICK_PERIOD * 1, 1);
+	}
+	//Ps2EnableKeyboardClock(1);
 
 }
 
@@ -178,12 +189,19 @@ VOID Ps2WriteKeyboardMemory(BYTE ScanCode)
 {
 	if (KEYBOARD_MEMORY_SIZE <= Ps2.Keyboard.KeyboardMemoryIndex) {
 		fprintf(stderr, "KeyboardMemory is Full %d\n", Ps2.Keyboard.KeyboardMemoryIndex);
-		exit(-1);
+		//exit(-1);
+		return;
 	}
 	Ps2.Keyboard.KeyboardMemory[Ps2.Keyboard.KeyboardMemoryIndex++] = ScanCode;
-	//TODO: Clock Enable
+	if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && Ps2.Keyboard.KeyboardClockEnabled
+		&& !Ps2.TimerPending) {
+		Ps2.TimerPending = 1;
+		//TimerActivate(Ps2.TimerId, TICK_PERIOD * 1, 1);
+	}
+	/*
 	if (!(Ps2.StatusRegister & STATUS_OUTPUT_KB_BUFFER_FULL) && Ps2.Keyboard.KeyboardClockEnabled)
 		Ps2EnableKeyboardClock(1);
+	*/
 }
 
 VOID Ps2KeyboardReset(VOID)
@@ -191,15 +209,34 @@ VOID Ps2KeyboardReset(VOID)
 	memset(Ps2.Keyboard.KeyboardMemory, '\0', sizeof(Ps2.Keyboard.KeyboardMemory));
 	Ps2.Keyboard.KeyboardMemoryIndex = 0;
 	Ps2.Keyboard.Typematic = 0;
-	Ps2.Keyboard.ScanCodeEnabled = 1;
-	Ps2.Keyboard.ScanCodeSet = 0;
+	Ps2.Keyboard.ScanCodeEnabled = 0;
+	Ps2.Keyboard.ScanCodeSet = 1;
 	Ps2.Keyboard.LedState = 0;
 	Ps2.Keyboard.Typematic = 0;
 	Ps2.StatusRegister &= ~STATUS_OUTPUT_KB_BUFFER_FULL;
 }
 
+//kbd_ctrl_to_kbd
 VOID Ps2SendKeyboard(BYTE Value)
 {
+	
+	if (Ps2.Keyboard.ScanCodeEnabled) {
+		Ps2.Keyboard.ScanCodeEnabled = 0;
+		if (Value) {
+			if (Value < 4) {
+				Ps2.Keyboard.ScanCodeSet = Value - 1;
+				Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
+			}
+			else 
+				Ps2WriteKeyboardMemory(0xFF);
+		}
+		else {
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
+			Ps2WriteKeyboardMemory(1 + Ps2.Keyboard.ScanCodeSet);
+		}
+		return;
+	}
+	
 	switch (Value) {
 		case 0x05:
 			break;
@@ -210,10 +247,17 @@ VOID Ps2SendKeyboard(BYTE Value)
 			Ps2WriteKeyboardMemory(0xEE);
 			break;
 		case KBD_CMD_SCANCODE:
+			Ps2.Keyboard.ScanCodeEnabled = 1;
 			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
 			break;
 		case KBD_CMD_GET_ID:
-
+			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
+			Ps2WriteKeyboardMemory(KBD_REPLY_ID);
+			if (Ps2.DataRegister & DATA_SCAN_CODE) 
+				Ps2WriteKeyboardMemory(0x41);
+			else 
+				Ps2WriteKeyboardMemory(0x83);
+			
 			break;
 		case KBD_CMD_SET_RATE:
 			Ps2WriteKeyboardMemory(KBD_REPLY_ACK);
@@ -364,6 +408,38 @@ VOID Ps2PortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 	}
 }
 
+VOID Ps2GenerateScancode(ULONG Key)
+{
+	BYTE* Scancode, Escaped;
+	ULONG i;
+
+	if (Key >= 119)
+		return;
+
+	if (Key & BX_KEY_RELEASED)
+		Scancode = (BYTE*)scancodes[Key][Ps2.Keyboard.ScanCodeSet].Break;
+	else
+		Scancode = (BYTE*)scancodes[Key][Ps2.Keyboard.ScanCodeSet].Make;
+
+	if (Ps2.DataRegister & DATA_SCAN_CODE) { //scancodes_translate
+		Escaped = 0x00;
+		for (i = 0; i < strlen((const char*)Scancode); i++) {
+			if (Scancode[i] != 0xF0) {
+				Ps2WriteKeyboardMemory(translation8042[Scancode[i]] | Escaped);
+				Escaped = 0x00;
+			}
+			else 
+				Escaped = 0x80;
+			
+		}
+	}
+	else {
+		// Send raw data
+		for (i = 0; i < strlen((const char*)Scancode); i++)
+			Ps2WriteKeyboardMemory(Scancode[i]);
+	}
+}
+
 
 
 ULONG Ps2TimerPeriodic(DWORD Seconds)
@@ -416,11 +492,12 @@ VOID Ps2TimerHandler(VOID *Param)
 VOID Ps2Initialize()
 {
 	memset(&Ps2, '\0', sizeof(Ps2));
+	//Ps2KeyboardReset();
 	RegisterPortIoHandler(0x60, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
 	RegisterPortIoHandler(0x64, (WritePortIoHandlerCallback)Ps2PortIoWriteHandler, (ReadPortIoHandlerCallback)Ps2PortIoReadHandler);
 	//TimerRegister(MSECONDS_TO_NS(10), Ps2TimerHandler, NULL);
 	//TimerRegister(TICK_PERIOD, Ps2TimerHandler, NULL);
-	Ps2.TimerId = TimerCreate(Ps2TimerHandler, (VOID *)NULL);
-
+	//Ps2.TimerId = TimerCreate(Ps2TimerHandler, (VOID *)NULL);
+	TimerRegister(TICK_PERIOD * 10, Ps2TimerHandler, NULL);
 	CmosSetRegister(REG_EQUIPMENT_BYTE, CmosGetRegister(REG_EQUIPMENT_BYTE) | 0x04);
 }

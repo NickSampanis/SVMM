@@ -1,7 +1,13 @@
 #include "i440fx.h"
 #include "pci.h"
+#include "gvm.h"
+#include "SVMM.h"
+#include "haxm.h"
 
 static struct i440fx i440fx;
+extern BYTE* Ram;
+extern ULONG64 RamSize;
+extern struct Registers Registers;
 
 static ULONG I440fxPciConfReadHandler(ULONG64 Address, ULONG Length)
 {
@@ -77,6 +83,20 @@ static VOID I440fxPciConfWriteHandler(PCI *Pci, ULONG64 Address, ULONG Value, UL
 				break;
 			case 0x72:
 				//smram_control(value8); // SMRAM control register
+				if (byte & 0x40) {
+					gvm_unmap_memory(Registers.smbase, SMM_RAM_SIZE);
+					gvm_map_memory(Registers.smbase, SMM_RAM_SIZE, (uint64_t)Ram + RamSize + ROM_SIZE + PAGE_SIZE);
+					gvm_map_memory(0xa0000, SMM_RAM_SIZE, (uint64_t)Ram + RamSize + ROM_SIZE + PAGE_SIZE);
+				}
+				else {
+					gvm_unmap_memory(Registers.smbase, SMM_RAM_SIZE);
+					gvm_map_memory(Registers.smbase, SMM_RAM_SIZE, (uint64_t)Ram + Registers.smbase);
+					//map it as vga mmio again
+					gvm_register_mmio(0xa0000, SMM_RAM_SIZE);
+					//BUGFIX: kvm doesn't update smbase?
+					Registers.smbase = 0xa0000;
+				}
+				Pci->conf[Address + i] = byte;
 				break;
 			case 0x7a:
 				Pci->conf[Address + i] &= 0x0a;
@@ -86,6 +106,37 @@ static VOID I440fxPciConfWriteHandler(PCI *Pci, ULONG64 Address, ULONG Value, UL
 				Pci->conf[Address + i] = byte;
 			}
 	}
+}
+
+VOID I440fxReset(VOID)
+{
+	ULONG devFunc, i;
+
+	devFunc = BX_PCI_DEVICE(0, 0);
+
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x04), 0x06, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x05), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x06), 0x80, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x07), 0x02, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x0d), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x0f), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x50), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x51), 0x01, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x52), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x54), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x55), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x56), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x57), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x58), 0x10, 1);
+	for (i = 0x59; i < 0x60; i++)
+		PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, i), 0x00, 1);
+
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xb4), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xb9), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xba), 0x00, 1);
+	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xbb), 0x00, 1);
+	//PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x72), 0x02, 1);
+
 }
 
 VOID I440fxInitialize(VOID* Ram, ULONG64 RamSize)
@@ -99,7 +150,7 @@ VOID I440fxInitialize(VOID* Ram, ULONG64 RamSize)
 	Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
 	PciRegisterConfigHandler(Address, I440fxPciConfWriteHandler, I440fxPciConfReadHandler);
 	PciInitConfig(Address, PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82441, 0x00, 0x0600, 0x00, 0x00, 0);
-
+	I440fxReset();
 	RegisterPortIoHandler(0x92, (WritePortIoHandlerCallback)I440fxPortIoWriteHandler, (ReadPortIoHandlerCallback)I440fxPortIoReadHandler);
 	RegisterPortIoHandler(0xcf8, (WritePortIoHandlerCallback)I440fxPortIoWriteHandler, (ReadPortIoHandlerCallback)I440fxPortIoReadHandler);
 	for (i = 0xcfc; i <= 0xcff; i++)
@@ -129,36 +180,7 @@ VOID I440fxInitialize(VOID* Ram, ULONG64 RamSize)
 		PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x60 + i), i440fx.drb[i], 1);
 }
 
-VOID I440fxReset(VOID)
-{
-	ULONG devFunc, i;
 
-	devFunc = PCI_DEVFUNC_TO_ADDRESS(0, 0);
-
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x04), 0x06, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x05), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x06), 0x80, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x07), 0x02, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x0d), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x0f), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x50), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x51), 0x01, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x52), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x54), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x55), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x56), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x57), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x58), 0x10, 1);
-	for (i = 0x59; i < 0x60; i++)
-		PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, i), 0x00, 1);
-
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xb4), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xb9), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xba), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0xbb), 0x00, 1);
-	PciWriteConfHandler(PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0x72), 0x02, 1);
-
-}
 
 static ULONG I440fxPortIoReadHandler(ULONG64 Address, ULONG Length)
 {

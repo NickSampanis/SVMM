@@ -149,3 +149,4 @@ void set_tooltip(unsigned hbar_id, const char* tip);
 void flush(void);
 void dimension_update(unsigned x, unsigned y, unsigned fheight, unsigned fwidth, unsigned bpp);
 void clear_screen(void);
+void handle_events(void* Param);

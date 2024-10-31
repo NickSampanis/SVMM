@@ -572,7 +572,8 @@ struct kvm_msi {
 #define MSR_CORE_PERF_GLOBAL_CTRL 0x0000038f
 #define MSR_CORE_PERF_GLOBAL_OVF_CTRL	0x00000390
 
-#define MSR_APIC_BASE 0x800
+#define MSR_APIC_BASE			0x800
+#define MSR_IA32_SMBASE			0x0000009e
 
 NTSTATUS gvm_get_registers(struct Registers* Registers);
 
@@ -580,5 +581,7 @@ NTSTATUS gvm_set_registers(struct Registers* Registers);
 int gvm_init(void* ram, size_t ram_size);
 void gvm_register_mmio(unsigned int address, size_t size);
 void gvm_remove_mmio(unsigned int address, size_t size);
+void gvm_unmap_memory(unsigned int address, size_t size);
+void gvm_map_memory(unsigned int address, unsigned int size, uint64_t ram);
 
 #endif

@@ -154,14 +154,15 @@ VOID SvmmDbgSendAck()
 
 }
 */
-VOID SvmmDbgRecv(USHORT Type, BYTE* Buffer, SIZE_T Size)
+LONG SvmmDbgRecv(USHORT Type, BYTE* Buffer, SIZE_T Size)
 {
     PDBG_PACKET_HEADER pktHdr;
     LONG bytesReceived;
     BYTE pkt[DBG_MAX_PACKET_DATA_SIZE + sizeof(DBG_PACKET_HEADER)];
 
     memset(pkt, '\0', sizeof(pkt));
-    bytesReceived = recv(clientSocket, pkt, sizeof(DBG_PACKET_HEADER) + Size, 0);
+
+    bytesReceived = recv(clientSocket, (char*)pkt, sizeof(DBG_PACKET_HEADER), 0);
     //printf("packet received %lld bytes\n", bytesReceived);
 
     pktHdr = (PDBG_PACKET_HEADER)pkt;
@@ -174,8 +175,8 @@ VOID SvmmDbgRecv(USHORT Type, BYTE* Buffer, SIZE_T Size)
         fprintf(stderr, "Client disconnected\n");
         exit(-1);
     }
-    if (bytesReceived != sizeof(DBG_PACKET_HEADER) + Size) {
-        fprintf(stderr, "bytesReceived != sizeof(DBG_PACKET_HEADER)\n");
+    if (bytesReceived != sizeof(DBG_PACKET_HEADER)) {
+        fprintf(stderr, "bytesReceived != sizeof(DBG_PACKET_HEADER) + Size\n");
         exit(-1);
     }
     if (pktHdr->Magic != DBG_MAGIC) {
@@ -183,23 +184,38 @@ VOID SvmmDbgRecv(USHORT Type, BYTE* Buffer, SIZE_T Size)
         exit(-1);
     }
     if (++SvmmPacketId != pktHdr->Id) {
-        fprintf(stderr, "SvmmPacketId != pktHdr->Id\n");
+        fprintf(stderr, "packetId != pktHdr->Id\n");
         exit(-1);
     }
     if (Type != pktHdr->Type) {
-        fprintf(stderr, "Type != pktHdr->Type\n");
+        fprintf(stderr, "packetId != pktHdr->Id\n");
         exit(-1);
     }
-    if (Buffer)
+    /* We are expecting data, but there was an error */
+    if (Size && !pktHdr->Size)
+        return 0;
+
+    if (Size)
+        bytesReceived += recv(clientSocket, (char*)pkt + sizeof(DBG_PACKET_HEADER), Size, 0);
+
+    if (Buffer) {
+        if (pktHdr->Checksum != ComputeChecksum(pktHdr->Data, pktHdr->Size)) {
+            fprintf(stderr, "pktHdr->Checksum != ComputeChecksum(pktHdr->Data, pktHdr->Size)\n");
+            exit(-1);
+        }
         memcpy(Buffer, pktHdr->Data, pktHdr->Size);
+    }
+    return bytesReceived;
 }
 
-VOID SvmmDbgSend(USHORT Type, BYTE* Buffer, SIZE_T Size)
+LONG SvmmDbgSend(USHORT Type, BYTE* Buffer, SIZE_T Size)
 {
     PDBG_PACKET_HEADER pktHdr;
     LONG bytesSend;
+    BYTE pkt[DBG_MAX_PACKET_DATA_SIZE + sizeof(DBG_PACKET_HEADER)];
 
-    pktHdr = calloc(sizeof(BYTE), sizeof(DBG_PACKET_HEADER) + Size);
+    memset(pkt, '\0', sizeof(pkt));
+    pktHdr = (PDBG_PACKET_HEADER)pkt;
     pktHdr->Id = ++SvmmPacketId;
     pktHdr->Magic = DBG_MAGIC;
     pktHdr->Type = Type;
@@ -208,13 +224,13 @@ VOID SvmmDbgSend(USHORT Type, BYTE* Buffer, SIZE_T Size)
         memcpy(pktHdr->Data, (void*)Buffer, Size);
         pktHdr->Checksum = ComputeChecksum(pktHdr->Data, pktHdr->Size);
     }
-    bytesSend = send(clientSocket, pktHdr, sizeof(DBG_PACKET_HEADER) + Size, 0);
+    bytesSend = send(clientSocket, (const char*)pktHdr, sizeof(DBG_PACKET_HEADER) + Size, 0);
     if (bytesSend != sizeof(DBG_PACKET_HEADER) + Size) {
-        fprintf(stderr, "bytesSend != sizeof(DBG_PACKET_HEADER) + Size\n");
+        fprintf(stderr, "bytesSend != sizeof(pktHdr)\n");
         exit(-1);
     }
-    free(pktHdr);
-    //SvmmDbgRecvAck();
+
+    return bytesSend;
 }
 
 BYTE SvmmDbgLoop()
@@ -222,7 +238,7 @@ BYTE SvmmDbgLoop()
     BOOL ret;
     fd_set readSet;
     LONG bytes;
-    LONG64 i, result, bytesReceived, dataToRead;
+    LONG64 i, result, bytesReceived, dataToRead, hostGpa;
     PDBG_PACKET_HEADER pktHdr;
     struct kvm_guest_debug kvm_debug;
     PDBG_PACKET_READ_REQUEST pktReadReq;
@@ -310,15 +326,24 @@ BYTE SvmmDbgLoop()
                 }
                 pktReadReq = (PDBG_PACKET_READ_REQUEST)pktHdr->Data;
                 //printf("read request addr 0x%llx size 0x%llx\n", pktReadReq->Addr, pktReadReq->Size);
-                
-                if (SvmmGetHostPageFromGPA(pktReadReq->Addr) + pktReadReq->Size >= MemoryEnd) {
+                hostGpa = SvmmGetHostPageFromGPA(pktReadReq->Addr);
+
+                if (hostGpa + pktReadReq->Size >= MemoryEnd) {
+                    SvmmDbgSend(DBG_TYPE_READ_MEMORY, NULL, 0);
                     fprintf(stderr, "SvmmGetHostAddress(Req->Addr) + Req->Size >= MemoryEnd)\n");
-                    exit(-1);
+                    break;
+                    //exit(-1);
                 }
                 
                 for (i = 0; i < (LONG64)pktReadReq->Size; i += DBG_MAX_PACKET_DATA_SIZE) {
-                    SvmmDbgSend(DBG_TYPE_READ_MEMORY, SvmmGetHostPageFromGPA(pktReadReq->Addr + i),
-                        (pktReadReq->Size - i) > DBG_MAX_PACKET_DATA_SIZE ? DBG_MAX_PACKET_DATA_SIZE : (pktReadReq->Size - i));
+                    hostGpa = SvmmGetHostPageFromGPA(pktReadReq->Addr + i);
+                    if (!hostGpa) {
+                        SvmmDbgSend(DBG_TYPE_READ_MEMORY, NULL, 0);
+                        fprintf(stderr, "SvmmGetHostAddress(Req->Addr) + Req->Size >= MemoryEnd)\n");
+                        break;
+                    }
+                    SvmmDbgSend(DBG_TYPE_READ_MEMORY, hostGpa, (pktReadReq->Size - i) > DBG_MAX_PACKET_DATA_SIZE ?
+                        DBG_MAX_PACKET_DATA_SIZE : (pktReadReq->Size - i));
                 }
                 break;
             case DBG_TYPE_WRITE_MEMORY:
@@ -327,14 +352,21 @@ BYTE SvmmDbgLoop()
                     exit(-1);
                 }
                 pktWriteReq = (PDBG_PACKET_WRITE_REQUEST)pktHdr->Data;
-                
-                if (SvmmGetHostPageFromGPA(pktWriteReq->Addr) + pktWriteReq->Size >= MemoryEnd) {
+                hostGpa = SvmmGetHostPageFromGPA(pktWriteReq->Addr);
+                if (hostGpa + pktWriteReq->Size >= MemoryEnd) {
+                    SvmmDbgSend(DBG_TYPE_WRITE_MEMORY, NULL, 0);
                     fprintf(stderr, "SvmmGetHostAddress(Req->Addr) + Req->Size >= MemoryEnd)\n");
-                    exit(-1);
+                    break;
                 }
                 for (i = 0; i < (LONG64)pktWriteReq->Size; i += DBG_MAX_PACKET_DATA_SIZE) {
-                    SvmmDbgRecv(DBG_TYPE_WRITE_MEMORY, SvmmGetHostPageFromGPA(pktWriteReq->Addr + i),
-                        (pktWriteReq->Size - i) > DBG_MAX_PACKET_DATA_SIZE ? DBG_MAX_PACKET_DATA_SIZE : (pktWriteReq->Size - i));
+                    hostGpa = SvmmGetHostPageFromGPA(pktWriteReq->Addr + i);
+                    if (!hostGpa) {
+                        SvmmDbgSend(DBG_TYPE_WRITE_MEMORY, NULL, 0);
+                        fprintf(stderr, "SvmmGetHostAddress(Req->Addr) + Req->Size >= MemoryEnd)\n");
+                        break;
+                    }
+                    SvmmDbgRecv(DBG_TYPE_WRITE_MEMORY, hostGpa, (pktWriteReq->Size - i) > DBG_MAX_PACKET_DATA_SIZE ?
+                        DBG_MAX_PACKET_DATA_SIZE : (pktWriteReq->Size - i));
                 }
                 if (pktWriteReq->Size == 1 && *SvmmGetHostPageFromGPA(pktWriteReq->Addr) == 0xcc) {
                     memset(&kvm_debug, '\0', sizeof(kvm_debug));

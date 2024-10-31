@@ -2200,7 +2200,7 @@ VOID HardDiskInitialize()
 		RegisterPortIoHandler(AtaChannel[0].IoAddr2 + i, HardDiskPortIoWriteHandler, HardDiskPortIoReadHandler);
 	
 	//SparseInitializeHardDisk("c.img");
-	VhdInitializeHardDisk("c.vhd");
+	VhdInitializeHardDisk("freeBSD.vhd");
 	AtaChannel[0].Drive[0].Cylinders = VhdGetHardDiskSize() / (HARDDISK_HEADS * HARDDISK_SECTORS * HARDDISK_SECTOR_SIZE);
 	AtaChannel[0].Drive[0].Heads = HARDDISK_HEADS;
 	AtaChannel[0].Drive[0].Spt = HARDDISK_SPT;

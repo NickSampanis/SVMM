@@ -3,6 +3,7 @@
 #include "win32gui.h"
 #include "timer.h"
 #include "pci.h"
+#include "vga.h"
 
 
 static const WORD charmap_offset[8] = {
@@ -207,6 +208,7 @@ VOID VgaCoreUpdate(VOID)
     unsigned long byte_offset;
     unsigned xc, yc, xti, yti;
 
+    cs_counter--;
     if ((VgaCore.vga_mem_updated == 0) && (cs_counter > 0))
         return;
     if (cs_counter == 0) {
@@ -502,7 +504,8 @@ VOID VgaCoreUpdate(VOID)
             return;
         }
         cWidth = ((VgaCore.sequencer.reg1 & 0x01) == 1) ? 8 : 9;
-        if (VgaCore.x_dotclockdiv2) cWidth <<= 1;
+        if (VgaCore.x_dotclockdiv2) 
+            cWidth <<= 1;
         iWidth = cWidth * cols;
         iHeight = VDE + 1;
         if ((iWidth != VgaCore.last_xres) || (iHeight != VgaCore.last_yres) ||
@@ -520,8 +523,7 @@ VOID VgaCoreUpdate(VOID)
             return;
 
         // pass old text snapshot & new VGA memory contents
-        cursor_address = 2 * ((VgaCore.CRTC.reg[0x0e] << 8) +
-            VgaCore.CRTC.reg[0x0f]);
+        cursor_address = 2 * ((VgaCore.CRTC.reg[0x0e] << 8) + VgaCore.CRTC.reg[0x0f]);
         if ((cursor_address < tm_info.start_address) ||
             (cursor_address > (tm_info.start_address + tm_info.line_offset * rows))) {
             cursor_address = 0xffff;
@@ -1274,10 +1276,8 @@ VOID VgaCorePortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
         calculate_retrace_timing();
         break;
 
-    case 0x03c3: // VGA enable
-      // bit0: enables VGA display if set
+    case 0x03c3: // VGA enable bit0: enables VGA display if set
         VgaCore.vga_enabled = Value & 0x01;
-
         break;
 
     case 0x03c4: /* Sequencer Index Register */
@@ -1371,11 +1371,6 @@ VOID VgaCorePortIoWriteHandler(ULONG64 Address, ULONG Value, ULONG Length)
 
         VgaCore.pel.write_data_cycle++;
         if (VgaCore.pel.write_data_cycle >= 3) {
-            //BX_INFO(("VgaCore.pel.data[%u] {r=%u, g=%u, b=%u}",
-            //  (unsigned) VgaCore.pel.write_data_register,
-            //  (unsigned) VgaCore.pel.data[VgaCore.pel.write_data_register].red,
-            //  (unsigned) VgaCore.pel.data[VgaCore.pel.write_data_register].green,
-            //  (unsigned) VgaCore.pel.data[VgaCore.pel.write_data_register].blue);
             VgaCore.pel.write_data_cycle = 0;
             VgaCore.pel.write_data_register++;
         }
@@ -1847,7 +1842,7 @@ ULONG VgaCorePortIoReadHandler(ULONG64 Address, ULONG Length)
     default:
         return (0); /* keep compiler happy */
     }
-
+    return 0;
 }
 
 VOID VgaCoreMMIOWriteHandler2(ULONG Address, BYTE* Data, ULONG Length)
@@ -1873,7 +1868,8 @@ VOID VgaCoreTimerHandler()
 
 VOID VgaCoreInitialize()
 {
-	int y, x, Address;
+	int y, x;
+    ULONG Address, devFunc;
 
 	memset(&VgaCore, '\0', sizeof(VgaCore));
 	
@@ -1914,9 +1910,12 @@ VOID VgaCoreInitialize()
 	VgaCore.memory = calloc(1, VgaCore.memsize);
 
     VgaInitialize();
-	GuiInitialize(0, NULL, 0x320, 0x258, 0x10, 0x18);
+	GuiInitialize(0, NULL, VgaCore.max_xres, VgaCore.max_yres, 0x10, 0x18);
 
 	//RegisterMMIO
+    devFunc = BX_PCI_DEVICE(2, 0);
+    Address = PCI_DEVFUNC_OFFSET_TO_ADDRESS(0, devFunc, 0);
+    //PciSetBarMmio(Address, 0, 0, 0x20000, VgaCoreMMIOReadHandler, VgaCoreMMIOWriteHandler, 0);
     MmioRegisterHandler(0xa0000, 0x20000, VgaCoreMMIOWriteHandler, VgaCoreMMIOReadHandler);
     //RegisterMMIOHandler(0x110000, VgaCoreMMIOWriteHandler2, VgaCoreMMIOReadHandler);
 

@@ -27,6 +27,7 @@
 #include "harddisk.h"
 #include "SvmmDbgServer.h"
 #include "hpet.h"
+#include "flash.h"
 #include <intrin.h>
 #include <CommCtrl.h>
 
@@ -45,6 +46,7 @@ extern HANDLE hGvm, hGvmCpu, hGvmVm;
 extern volatile unsigned char* pio_data;
 #endif
 
+extern PCI PciDevices[MAX_BUSES][MAX_PCI_DEVICES_PER_BUS];
 extern SOCKET windbg_sock;
 extern BYTE Stepping;
 extern struct kvm_msrs* msrs;
@@ -63,19 +65,25 @@ BYTE *SvmmGetHostPageFromGPA(ULONG64 gpaAddress)
 
 	if (gpaAddress >= 0xFFFE0000 && gpaAddress <= 0xFFFFFFFF) {
 		//0xFFFE0000 = Ram + RamSize, 0xFFFF0000 = Ram + RamSize + 0x10000
-		gpaAddress &= 0x000FFFFF;
-		gpaAddress = ((gpaAddress >> 16) & 1) << 4;
-		hostAddress = (BYTE*)Ram + RamSize + gpaAddress;
+		gpaAddress -= 0xFFFE0000;
+		hostAddress = (BYTE*)Ram + RamSize + 0xE0000 + gpaAddress;
 	}
-	else if (gpaAddress >= 0xE0000 && gpaAddress <= 0xFFFFF) {
+	else if (gpaAddress >= 0xE0000 && gpaAddress <= 0xFFFFF) 
 		hostAddress = (BYTE*)Ram + RamSize + gpaAddress;
+	else if (PciDevices[0][BX_PCI_DEVICE(1, 3)].conf[0x5b] & 2 && gpaAddress >= Registers.smbase && gpaAddress <= Registers.smbase + SMM_RAM_SIZE) {
+		//SMM RAM enabled
+		gpaAddress -= Registers.smbase;
+		gpaAddress &= (SMM_RAM_SIZE - 1);
+		hostAddress = (BYTE*)Ram + RamSize + ROM_SIZE + PAGE_SIZE + gpaAddress;
+
 	}
-	else {
+	else 
 		hostAddress = (BYTE*)Ram + gpaAddress;
-	}
+	
 	if (hostAddress >= MemoryEnd) {
 		fprintf(stderr, "Error hostAddress >= MemoryEnd gpa Address = 0x%llx\n", gpaAddress);
-		exit(-1);
+		//exit(-1);
+		return NULL;
 	}
 
 	return hostAddress;
@@ -139,6 +147,8 @@ ULONG64 Pml4GetGpaFromGva(ULONG64 Gva, BYTE* Levels, ULONG LevelSize, ULONG Entr
 	CHAR leaf;
 
 	phys = (ULONG64)SvmmGetHostPageFromGPA(Registers.context._cr3 & BX_CR3_PAGING_MASK);
+	if (!phys)
+		return 0;
 	entry = 0;
 	for (leaf = LevelSize - 1; leaf >= 0; --leaf) {
 		bitsSum = 12;
@@ -567,12 +577,12 @@ int main(int argc, char *argv[])
 	counter = 0;
 	tsc = 0;
 	RamSize = 1024 * MB;
-	Ram = VirtualAlloc(NULL, RamSize + ROM_SIZE + PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	Ram = VirtualAlloc(NULL, RamSize + ROM_SIZE + PAGE_SIZE + SMM_RAM_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (!Ram) {
 		fprintf(stderr, "VirtualAlloc 0x%x", GetLastError());
 		return -1;
 	}
-	MemoryEnd = Ram + RamSize + ROM_SIZE + PAGE_SIZE;
+	MemoryEnd = Ram + RamSize + ROM_SIZE + PAGE_SIZE + SMM_RAM_SIZE;
 	//CreateVm
 #ifdef HAXM
 	Status = haxm_init(Ram, RamSize);
@@ -610,10 +620,10 @@ int main(int argc, char *argv[])
 	CmosSetupMemory(RamSize);
 	//CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_CD | (CMOS_BOOT_HD << 4));
 	CmosSetRegister(CMOS_BOOT_REG, CMOS_BOOT_HD);
-	CmosSetRegister(CMOS_FAST_BOOT, 1);
+	//CmosSetRegister(CMOS_FAST_BOOT, 1);
 
 	//Load Bios At The End Of Ram
-	Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);
+	//Status = SvmmLoadRom("BIOS-bochs-latest.bin", TYPE_SYSTEM_BIOS);
 	/*
 	//UEFI future stuff
 	Status = SvmmLoadRom("OVMF.fd", TYPE_SYSTEM_BIOS);
@@ -624,6 +634,7 @@ int main(int argc, char *argv[])
 	*/
 	//UEFI to delete
 	//SvmmLoadUefi();
+	FlashInitialize(Ram + RamSize + 0xe0000);
 	/*
 	HANDLE hFile = CreateFileA("OVMF.fd", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
@@ -647,9 +658,9 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Error in ReadFile 0x%lx\n", GetLastError());
 		return -1;
 	}
+	
 	*/
 	//VGA BIOS
-	
 	Status = SvmmLoadRom("VGABIOS-lgpl-latest.bin", TYPE_VGA_BIOS);
 	if (Status < 0) {
 		fprintf(stderr, "SvmmLoadRom 0x%x", Status);
@@ -862,9 +873,13 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_HLT:
+			/*
 			printf("GVM_EXIT_HLT\n");
 			SvmmPrintRegisters(&Registers);
 			scanf_s("%d", &Bytes);
+			while (argv[1])
+				dbgState = SvmmDbgLoop();
+			*/
 			break;
 		case GVM_EXIT_INTERNAL_ERROR:
 			printf("GVM_EXIT_INTERNAL_ERROR\n");
@@ -927,8 +942,10 @@ int main(int argc, char *argv[])
 				vector = ApicAcknowledgeInterrupt();
 			else
 				continue;
+			/*
 			printf("current rip = 0x%llx\n", Registers.context._rip);
 			printf("vector = 0x%x\n", vector);
+			
 			if (SvmmGetCpuMode() == CPU_MODE_LONG_MODE) {
 				ULONG64* tmp, tmp2;
 				tmp = SvmmGetHostAddress(Registers.context._idt.base + vector * 16);
@@ -937,6 +954,7 @@ int main(int argc, char *argv[])
 				tmp2 |= (*tmp << 32);
 				printf("irq handler 0x%llx\n", tmp2);
 			}
+			*/
 			SvmmInterrupt(vector);
 			//scanf_s("%d", &Bytes);
 			break;
@@ -964,14 +982,17 @@ int main(int argc, char *argv[])
 					Registers.context._rip == Registers.context._dr1 || 
 					Registers.context._rip == Registers.context._dr2 || 
 					Registers.context._rip == Registers.context._dr3 ||
-					dbgState == DBG_TYPE_RUN || dbgState == DBG_TYPE_STEP_OVER) {
+					dbgState == DBG_TYPE_RUN || dbgState == DBG_TYPE_STEP_OVER || 
+					dbgState == DBG_TYPE_STEP_INTO) {
 					//printf("you should break!?\n");
 					//SvmmDbgSend(DBG_TYPE_ON_BREAK, (BYTE*)NULL, 0);
 					dbgState = SvmmDbgLoop();
 				}
+				/*
 				else if (dbgState == DBG_TYPE_STEP_INTO) {
 					dbgState = SvmmDbgLoop();
 				}
+				*/
 				
 			}
 		
@@ -984,9 +1005,9 @@ int main(int argc, char *argv[])
 			scanf_s("%d", &Bytes);
 			break;
 		case GVM_EXIT_SET_TPR:
-			printf("GVM_EXIT_SET_TPR\n");
+			//printf("GVM_EXIT_SET_TPR\n");
 			ApicMMIOWriteHandler(APIC_DEFAULT_MMIO + LAPIC_TPR, &kvm_run->cr8, 4);
-			printf("rip = 0x%llx\n", Registers.context._rip);
+			//printf("rip = 0x%llx\n", Registers.context._rip);
 
 			//scanf_s("%d", &Bytes);
 			break;
@@ -1026,7 +1047,7 @@ int main(int argc, char *argv[])
 			printf("GVM_EXIT_MSR\n");
 			printf("%s msr[0x%llx] = 0x%llx\n", kvm_run->msr.is_write ? "write" : "read", 
 				kvm_run->msr.msr_index, kvm_run->msr.data);
-			ApicSetMsr(kvm_run->msr.data);			
+			//ApicSetMsr(kvm_run->msr.data);			
 			break;
 		default:
 			printf("default\n");

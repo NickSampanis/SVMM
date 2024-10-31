@@ -1,7 +1,8 @@
 #include "win32gui.h"
 #include "vga_bitmap.h"
 #include <CommCtrl.h>
-
+#include "timer.h"
+#include "ps2.h"
 
 extern BOOL new_gfx_api;
 extern WORD host_xres;
@@ -687,6 +688,7 @@ Win32GuiInitialize()
     desktop_y = desktop.bottom - desktop.top;
     max_client_x = desktop_x - 20;
     max_client_y = desktop_y - 80;
+   
     
     
 }
@@ -785,6 +787,7 @@ VOID Win32GuiSpecificInit(int argc, char** argv, unsigned headerbar_y)
         dialog_caps = BX_GUI_DLG_ALL;
     }
     new_text_api = 1;
+    TimerRegister(TICK_PERIOD * 10, handle_events, NULL);
 
 }
 
@@ -1342,6 +1345,7 @@ void enq_key_event(DWORD key, DWORD press_release)
 
 void enq_mouse_event(void)
 {
+    return;
     EnterCriticalSection(&stInfo.mouseCS);
     if (ms_xdelta || ms_ydelta || ms_zdelta) {
         if (((tail + 1) % SCANCODE_BUFSIZE) == head) {
@@ -1382,7 +1386,7 @@ struct QueueEvent* deq_key_event(void)
 }
 
 
-void handle_events(void)
+void handle_events(void *Param)
 {
     DWORD key;
     DWORD key_event;
@@ -1422,8 +1426,9 @@ void handle_events(void)
         }
         else {
             key_event = win32_to_bx_key[(key & 0x100) ? 1 : 0][key & 0xff];
-            if (key & BX_KEY_RELEASED) key_event |= BX_KEY_RELEASED;
-            //DEV_kbd_gen_scancode(key_event);
+            if (key & BX_KEY_RELEASED) 
+                key_event |= BX_KEY_RELEASED;
+            Ps2GenerateScancode(key_event);
         }
     }
     LeaveCriticalSection(&stInfo.keyCS);
